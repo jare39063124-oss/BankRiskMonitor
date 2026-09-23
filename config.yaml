@@ -1,0 +1,88 @@
+# BankRiskMonitor 全局配置（声明式数据源登记：可新增/启停/排序，无需改代码）
+app:
+  name: BankRiskMonitor
+  refresh_interval_minutes: 30   # 定时刷新周期（0=关闭自动刷新）
+  proxy: ""                      # HTTP 代理，如 http://127.0.0.1:7890；留空不使用
+
+penetration:
+  enabled: true
+  up_levels: 2      # 向上股东穿透层数（1-2）
+  down_levels: 2    # 向下对外投资穿透层数（1-2）
+
+# 数据源声明式登记：category -> 有序 Provider 链（排在前面的优先）
+# enabled: true/false 控制启停；params 中的 key 留空表示该源未启用（自动跳过）
+sources:
+  news:
+    - name: baidu_news
+      enabled: true
+      class: providers.news_baidu.BaiduNewsProvider
+      params: {}
+    - name: sogou_news
+      enabled: false
+      class: providers.news_sogou.SogouNewsProvider
+      params: {}
+    - name: rss
+      enabled: true
+      class: providers.news_rss.RssProvider
+      params:
+        feeds:
+          - https://rsshub.app/pengpai/channels/25
+    - name: istero_pengpai
+      enabled: true
+      class: providers.news_istero.IsteroNewsProvider
+      params:
+        base_url: https://api.istero.com/service/pengpaixinwen/reshoubang
+        token: ""
+    - name: newsapi
+      enabled: false
+      class: providers.newsapi_org.NewsApiProvider
+      params:
+        api_key: ""
+  biz_change:
+    - name: aiqicha
+      enabled: true
+      class: providers.biz_aiqicha.AiqichaProvider
+      params: {}
+    - name: gsxt
+      enabled: false
+      class: providers.biz_gsxt.GsxtProvider
+      params: {}
+    - name: commercial_api
+      enabled: false
+      class: providers.biz_commercial.CommercialApiProvider
+      params:
+        base_url: ""     # 天眼查/企查查/白牛等商业 API 地址
+        api_key: ""
+        vendor: tianyancha
+  lawsuit:
+    - name: wenshu
+      enabled: true
+      class: providers.court_wenshu.WenshuProvider
+      params: {}
+    - name: commercial_api
+      enabled: false
+      class: providers.biz_commercial.CommercialApiProvider
+      params:
+        base_url: ""
+        api_key: ""
+        vendor: qichacha
+  enforcement:
+    - name: zxgk
+      enabled: true
+      class: providers.court_zxgk.ZxgkProvider
+      params: {}
+    - name: commercial_api
+      enabled: false
+      class: providers.biz_commercial.CommercialApiProvider
+      params:
+        base_url: ""
+        api_key: ""
+        vendor: qichacha
+
+network:
+  timeout_seconds: 15
+  max_per_host_rps: 1        # 限流：每主机每秒最大请求数
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36
+
+ui:
+  map_mode: severity   # severity=按严重度着色 / category=按信息类型着色

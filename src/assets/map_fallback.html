@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>地图资源缺失</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #F5F6F8;
+    font-family: "Microsoft YaHei", "微软雅黑", sans-serif; font-size: 12px; color: #202124; }
+  .wrap { padding: 16px; }
+  .tip { background: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 4px;
+    padding: 10px 12px; color: #5F6368; margin-bottom: 12px; }
+  .tip b { color: #D93026; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { background: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 4px;
+    margin-bottom: 6px; padding: 8px 12px; cursor: pointer; }
+  li:hover { border-color: #1B5EBA; color: #1B5EBA; }
+  .meta { color: #5F6368; margin-left: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tip"><b>地图资源缺失</b>（echarts.min.js 或 china.json 未就绪），当前以文本列表展示监控主体。</div>
+  <ul id="list"></ul>
+</div>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+var bridge = null;
+new QWebChannel(qt.webChannelTransport, function (channel) {
+  bridge = channel.objects.bridge;
+  if (window.__pending) { renderItems(window.__pending); window.__pending = null; }
+});
+function renderSpots(spotsJson, mode) {
+  var spots;
+  try { spots = JSON.parse(spotsJson); } catch (e) { spots = []; }
+  if (bridge) renderItems(spots); else window.__pending = spots;
+}
+function renderItems(spots) {
+  var ul = document.getElementById("list");
+  ul.innerHTML = "";
+  for (var i = 0; i < spots.length; i++) {
+    var s = spots[i];
+    var li = document.createElement("li");
+    li.innerHTML = s.name + '<span class="meta">' + (s.province || "地区未知")
+      + "　事件 " + (s.event_count || 0) + " 条</span>";
+    li.onclick = (function (n) { return function () { if (bridge) bridge.onSpotClick(n); }; })(s.name);
+    ul.appendChild(li);
+  }
+}
+</script>
+</body>
+</html>

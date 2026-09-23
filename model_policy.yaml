@@ -1,0 +1,25 @@
+# 模型策略：仅允许免费模型（cost == 0），禁止 openrouter/auto 等元路由
+policy:
+  require_cost_zero: true
+  banned_models:
+    - openrouter/auto
+    - openrouter/*
+
+# OpenRouter 免费模型 fallback 列表（按序尝试）
+fallback_models:
+  - id: deepseek/deepseek-chat-v3.1:free
+    cost: 0
+  - id: qwen/qwen3-235b-a22b:free
+    cost: 0
+  - id: meta-llama/llama-3.3-70b-instruct:free
+    cost: 0
+  - id: google/gemma-3-27b-it:free
+    cost: 0
+  - id: mistralai/mistral-small-3.2-24b-instruct:free
+    cost: 0
+
+request:
+  timeout_seconds: 60
+  max_retries: 2
+  backoff_base_seconds: 2
+  failure_threshold: 3   # 连续失败次数达到阈值后进入降级模式

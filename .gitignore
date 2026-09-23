@@ -1,0 +1,11 @@
+.env
+data/
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec.bak
+venv/
+.venv/
+tests/__pycache__/
+output/

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>风险分布地图</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #FFFFFF;
+    font-family: "Microsoft YaHei", "微软雅黑", sans-serif; font-size: 12px; }
+  #map { width: 100%; height: 100%; }
+  #legend { position: absolute; top: 10px; right: 12px; background: rgba(255,255,255,.92);
+    border: 1px solid #E0E3E7; border-radius: 4px; padding: 6px 10px; color: #202124;
+    line-height: 1.9; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  #legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="legend"></div>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="echarts.min.js"></script>
+<script>
+var chart = null;
+var geoReady = false;
+var pending = null;          // [spotsJson, mode]
+window.bridge = null;
+
+var SEV_COLORS = { high: "#D93026", medium: "#E8710A", low: "#F9AB00", none: "#1A73E8" };
+var SEV_LABELS = { high: "高危", medium: "中危", low: "关注", none: "平稳" };
+var CAT_COLORS = { enforcement: "#D93026", lawsuit: "#F9AB00", biz_change: "#E8710A", news: "#1A73E8" };
+var CAT_ORDER = ["enforcement", "lawsuit", "biz_change", "news"];
+var CAT_LABELS = { news: "舆情新闻", biz_change: "工商变更", lawsuit: "涉诉", enforcement: "被执行/查封" };
+
+// 省份名归一化：与 china.json 的 name 字段对齐
+function normProv(p) {
+  if (!p) return "";
+  var s = String(p).replace(/\s/g, "");
+  var suffixes = ["维吾尔自治区", "壮族自治区", "回族自治区", "自治区", "特别行政区", "省", "市"];
+  for (var i = 0; i < suffixes.length; i++) {
+    if (s.length > suffixes[i].length && s.slice(-suffixes[i].length) === suffixes[i]) {
+      return s.slice(0, s.length - suffixes[i].length);
+    }
+  }
+  return s;
+}
+
+new QWebChannel(qt.webChannelTransport, function (channel) {
+  window.bridge = channel.objects.bridge;
+  flushPending();
+});
+
+function flushPending() {
+  if (pending && chart && geoReady && window.bridge) {
+    var s = pending[0], m = pending[1];
+    pending = null;
+    applySpots(s, m);
+  }
+}
+
+// 加载本地 GeoJSON 并注册地图（全部 file:// 本地资源，无网络请求）
+var xhr = new XMLHttpRequest();
+xhr.open("GET", "china.json", true);
+xhr.onload = function () {
+  try {
+    var geo = JSON.parse(xhr.responseText);
+    var centers = {};
+    for (var i = 0; i < geo.features.length; i++) {
+      var f = geo.features[i];
+      var nm = normProv(f.properties && f.properties.name);
+      var c = (f.properties && (f.properties.center || f.properties.centroid)) || null;
+      if (nm && c) centers[nm] = c;
+    }
+    echarts.registerMap("china", geo);
+    window.__centers = centers;
+    chart = echarts.init(document.getElementById("map"), null, { renderer: "canvas" });
+    chart.setOption({
+      tooltip: { trigger: "item", backgroundColor: "#FFFFFF", borderColor: "#E0E3E7",
+        textStyle: { color: "#202124", fontSize: 12, fontFamily: "Microsoft YaHei" },
+        extraCssText: "box-shadow:0 2px 8px rgba(0,0,0,.10);border-radius:4px;" },
+      geo: {
+        map: "china", roam: true, zoom: 1.12,
+        itemStyle: { areaColor: "#F5F6F8", borderColor: "#D8DCE1", borderWidth: 1 },
+        emphasis: { label: { color: "#1B5EBA" }, itemStyle: { areaColor: "#EAF1FB" } },
+        select: { disabled: true }
+      }
+    });
+    chart.on("click", function (params) {
+      if (params.componentType === "series" && window.bridge) {
+        window.bridge.onSpotClick(params.data.name);
+      }
+    });
+    geoReady = true;
+    flushPending();
+  } catch (e) {
+    document.getElementById("map").innerText = "地图数据解析失败：" + e;
+  }
+};
+xhr.onerror = function () {
+  document.getElementById("map").innerText = "地图数据加载失败（china.json 缺失）";
+};
+xhr.send();
+
+window.onresize = function () { if (chart) chart.resize(); };
+
+// Qt 侧入口：renderSpots(JSON字符串, "severity"|"category")
+function renderSpots(spotsJson, mode) {
+  if (chart && geoReady) applySpots(spotsJson, mode);
+  else pending = [spotsJson, mode];
+}
+
+function spotColor(sp, mode) {
+  if (mode === "category") {
+    for (var i = 0; i < CAT_ORDER.length; i++) {
+      if (sp.categories && sp.categories.indexOf(CAT_ORDER[i]) >= 0) return CAT_COLORS[CAT_ORDER[i]];
+    }
+    return "#1A73E8";
+  }
+  return SEV_COLORS[sp.severity] || SEV_COLORS.none;
+}
+
+function applySpots(spotsJson, mode) {
+  var spots;
+  try { spots = JSON.parse(spotsJson); } catch (e) { spots = []; }
+  var centers = window.__centers || buildCenters();
+  var data = [];
+  for (var i = 0; i < spots.length; i++) {
+    var sp = spots[i];
+    var c = centers[normProv(sp.province)] || [104.0, 35.0];
+    // 同省多主体做少量确定性偏移，避免完全重叠
+    var k = i % 7, ring = Math.floor(i / 7) + 1;
+    var ang = (k / 7) * Math.PI * 2;
+    var dx = Math.cos(ang) * 0.9 * ring, dy = Math.sin(ang) * 0.6 * ring;
+    var cats = sp.categories || [];
+    var catTxt = cats.map(function (x) { return CAT_LABELS[x] || x; }).join("、") || "暂无";
+    data.push({
+      name: sp.name,
+      value: [c[0] + dx, c[1] + dy],
+      count: sp.event_count || 0,
+      sev: sp.severity || "none",
+      catTxt: catTxt,
+      prov: sp.province || "",
+      itemStyle: { color: spotColor(sp, mode) }
+    });
+  }
+  chart.setOption({
+    series: [{
+      type: "effectScatter",
+      coordinateSystem: "geo",
+      data: data,
+      symbolSize: function (val, params) {
+        return 10 + Math.min(28, Math.sqrt(params.data.count || 0) * 5);
+      },
+      rippleEffect: { brushType: "stroke", scale: 2.6, period: 4.5 },
+      showEffectOn: "render",
+      label: { show: false },
+      emphasis: { scale: 1.4 },
+      zlevel: 2
+    }]
+  });
+  renderLegend(mode);
+}
+
+function buildCenters() {
+  window.__centers = window.__centers || {};
+  return window.__centers;
+}
+
+function renderLegend(mode) {
+  var html = "";
+  if (mode === "category") {
+    for (var i = 0; i < CAT_ORDER.length; i++) {
+      var k = CAT_ORDER[i];
+      html += '<div><span class="dot" style="background:' + CAT_COLORS[k] + '"></span>' + CAT_LABELS[k] + "</div>";
+    }
+  } else {
+    var order = ["high", "medium", "low", "none"];
+    for (var j = 0; j < order.length; j++) {
+      var s = order[j];
+      html += '<div><span class="dot" style="background:' + SEV_COLORS[s] + '"></span>' + SEV_LABELS[s] + "</div>";
+    }
+  }
+  document.getElementById("legend").innerHTML = html;
+}
+</script>
+</body>
+</html>
