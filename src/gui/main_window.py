@@ -1,9 +1,14 @@
 """MainWindow：地图居中、企业清单居左、事件流/预警居右、AI 摘要与状态栏居底。
 
-- 手动/定时刷新：QThread 后台调用 core.sync.run_sync（全部监控企业，含关联主体）；
+- 手动/定时刷新：QThread 后台调用 core.sync.run_sync（全部监控企业，含关联主体），
+  刷新前按设置中心的 category_frequency 过滤本轮参与的信息域（禁用域跳过不查询，
+  倍率以“每 N 次全局刷新执行一次”实现）；
 - 联动：地图光斑点击 -> 事件流按企业过滤；事件筛选变化 -> 重新加载事件；
+- 设置中心：工具栏与状态栏“设置”入口 -> SettingsDialog，保存后应用显示显隐
+  （apply_visibility）与新刷新周期（倒计时联动）；
 - 状态栏：生效模型/数据源、AI 在线或“自动化脚本降级”、下次刷新倒计时与免责声明。
 """
+import json
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -13,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QToolBar,
     QVBoxLayout,
@@ -24,7 +30,7 @@ try:
 except Exception:
     _agents_mod = None
 from ..core import db, settings
-from ..core.models import CATEGORY_LABELS
+from ..core.models import CATEGORIES, CATEGORY_LABELS
 from . import theme
 from .dialogs import (
     EnterpriseDialog,
@@ -49,27 +55,61 @@ SEV_LABELS = {"high": "高危", "medium": "中危", "low": "关注"}
 
 DISCLAIMER = "仅采集公开渠道信息用于银行内部贷后管理，不向客户发送任何信息"
 
+# 显示设置区域 key（app_settings.panel_visibility 的 JSON 键，无记录时全部显示）
+VISIBILITY_KEYS = ("map", "enterprise_list", "event_feed", "alerts", "ai_summary", "countdown")
+
+
+def run_refresh_cycle(ents, active_cats, progress_cb=None) -> dict:
+    """执行一轮全局刷新（供 RefreshWorker 线程与单测复用），返回 {"ok", "fail"}。
+
+    - active_cats：本轮允许查询的信息域集合；禁用/未到倍率轮次的域跳过不查询。
+    - 实现方式：临时以过滤包装器替换 sync.run_with_fallback，被过滤域直接返回
+      空结果，sync.run_sync 的入库/去重等其余逻辑保持不变；仅同一时间只允许
+      一个刷新线程（MainWindow 已保证），结束时在 finally 中恢复原函数。
+    - progress_cb(i, total, name)：进度回调（可在子线程中发射 Qt 信号）。
+    """
+    if sync is None or not ents:
+        return {"ok": 0, "fail": 0}
+    active = set(active_cats or ())
+    ok = fail = 0
+    total = len(ents)
+    original = sync.run_with_fallback
+    try:
+        if active:
+            def _filtered(cat, ent):
+                if cat not in active:
+                    return [], "disabled"
+                return original(cat, ent)
+
+            sync.run_with_fallback = _filtered
+            for i, ent in enumerate(ents, 1):
+                if progress_cb:
+                    progress_cb(i, total, ent.name)
+                try:
+                    sync.run_sync(ent)
+                    ok += 1
+                except Exception:
+                    fail += 1
+    finally:
+        sync.run_with_fallback = original
+    return {"ok": ok, "fail": fail}
+
 
 class RefreshWorker(FnWorker):
-    """串行刷新所有监控企业：run_sync(ent) -> dict。"""
+    """串行刷新所有监控企业：run_sync(ent) -> dict（仅查询本轮参与的信息域）。"""
 
     progress = Signal(int, int, str)
 
-    def __init__(self, ents, parent=None):
+    def __init__(self, ents, categories=None, parent=None):
         super().__init__(self._run_all, parent=parent)
         self._ents = ents
+        self._cats = set(categories or CATEGORIES)
 
     def _run_all(self):
-        ok = fail = 0
-        total = len(self._ents)
-        for i, ent in enumerate(self._ents, 1):
-            self.progress.emit(i, total, ent.name)
-            try:
-                sync.run_sync(ent)
-                ok += 1
-            except Exception:
-                fail += 1
-        return {"ok": ok, "fail": fail}
+        def cb(i, total, name):
+            self.progress.emit(i, total, name)
+
+        return run_refresh_cycle(self._ents, self._cats, cb)
 
 
 class MainWindow(QMainWindow):
@@ -85,10 +125,15 @@ class MainWindow(QMainWindow):
 
         self._worker = None
         self._next_refresh = None  # 下次自动刷新时间戳
+        self._refresh_counter = 0  # 全局刷新计数器（信息域倍率：每 N 轮执行一次）
+        self._vis = {k: True for k in VISIBILITY_KEYS}
+        self._cat_freq = {}
 
         self._build_ui()
         self._setup_timer()
         self._update_status_bar()
+        self._load_ui_settings()
+        self.apply_visibility(self._vis)
         self.reload_data()
 
     # ================= 界面构建 =================
@@ -145,12 +190,20 @@ class MainWindow(QMainWindow):
         self.source_label = QLabel(self)
         self.ai_label = QLabel(self)
         self.countdown_label = QLabel(self)
+        self.settings_btn = QPushButton("设置", self)
+        self.settings_btn.setFlat(True)
+        self.settings_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; "
+            f"color: {theme.TEXT_SECOND}; padding: 0 8px; }}"
+            f"QPushButton:hover {{ color: {theme.PRIMARY}; }}")
+        self.settings_btn.clicked.connect(self._open_settings)
         bar = self.statusBar()
         bar.addWidget(self.model_label)
         bar.addWidget(self.source_label)
         bar.addWidget(self.ai_label)
         bar.addWidget(self.countdown_label)
         bar.addPermanentWidget(QLabel(DISCLAIMER, self))
+        bar.addPermanentWidget(self.settings_btn)
 
         self._tick_timer = QTimer(self)
         self._tick_timer.timeout.connect(self._on_tick)
@@ -267,9 +320,10 @@ class MainWindow(QMainWindow):
         if minutes <= 0:
             self._next_refresh = None
             self.countdown_label.setText("自动刷新：关闭")
-            return
-        if self._next_refresh is None or self._next_refresh < datetime.now().timestamp():
-            self._next_refresh = datetime.now().timestamp() + minutes * 60
+        else:
+            if self._next_refresh is None or self._next_refresh < datetime.now().timestamp():
+                self._next_refresh = datetime.now().timestamp() + minutes * 60
+        self._update_countdown_visibility()
 
     def _on_tick(self):
         if self._next_refresh is None:
@@ -285,6 +339,63 @@ class MainWindow(QMainWindow):
             return
         self.countdown_label.setText(f"下次刷新：{remain // 60:02d}:{remain % 60:02d}")
 
+    # ================= 显示设置与信息域频率（设置中心） =================
+    def _load_ui_settings(self):
+        """从 app_settings 恢复显示设置与信息域频率配置。
+
+        无记录（首次启动/未保存过）时保持默认：全部区域显示、全部信息域启用。
+        """
+        try:
+            vis = json.loads(db.get_setting("panel_visibility", "{}") or "{}")
+        except (ValueError, TypeError):
+            vis = {}
+        self._vis = {k: bool(vis.get(k, True)) for k in VISIBILITY_KEYS}
+        try:
+            self._cat_freq = json.loads(db.get_setting("category_frequency", "{}") or "{}")
+        except (ValueError, TypeError):
+            self._cat_freq = {}
+
+    def apply_visibility(self, vis: dict):
+        """按显示设置显隐各区域（QSplitter/QVBoxLayout 布局自动重排）。
+
+        vis 键见 VISIBILITY_KEYS，缺省键按显示处理；倒计时还与刷新周期联动：
+        周期为 0 时即使勾选也不显示。
+        """
+        self._vis = {k: bool(vis.get(k, True)) for k in VISIBILITY_KEYS}
+        self.map_view.setVisible(self._vis["map"])
+        self.ent_panel.setVisible(self._vis["enterprise_list"])
+        self.feed_panel.setVisible(self._vis["event_feed"])
+        self.alert_panel.setVisible(self._vis["alerts"])
+        self.ai_panel.setVisible(self._vis["ai_summary"])
+        self._update_countdown_visibility()
+
+    def _update_countdown_visibility(self):
+        """状态栏倒计时可见性 = 显示设置勾选 且 自动刷新周期大于 0。"""
+        minutes = int(settings.config().get("app", {}).get("refresh_interval_minutes", 0) or 0)
+        self.countdown_label.setVisible(bool(self._vis.get("countdown", True)) and minutes > 0)
+
+    def due_categories(self) -> list:
+        """按 category_frequency 计算本轮参与查询的信息域。
+
+        - enabled=False 的域跳过不查询；
+        - 倍率含义：该域每 N 次全局刷新执行一次，N = max(1, round(1/rate))，
+          即 rate=1/2 每轮执行（2x 表示可更高频，最小实现与 1x 等价），
+          rate=0.5 隔次执行（全局刷新计数 0、2、4…轮时执行）。
+        """
+        due = []
+        for cat in CATEGORIES:
+            conf = self._cat_freq.get(cat) or {}
+            if not conf.get("enabled", True):
+                continue
+            try:
+                rate = float(conf.get("rate", 1) or 1)
+            except (TypeError, ValueError):
+                rate = 1.0
+            every = max(1, int(round(1.0 / rate))) if rate > 0 else 1
+            if self._refresh_counter % every == 0:
+                due.append(cat)
+        return due
+
     # ================= 刷新 =================
     def _manual_refresh(self):
         if sync is None:
@@ -297,9 +408,16 @@ class MainWindow(QMainWindow):
         if not ents:
             QMessageBox.information(self, "提示", "暂无监控企业，请先添加。")
             return
-        self.statusBar().showMessage(f"刷新监控中：共 {len(ents)} 家主体…")
+        cats = self.due_categories()
+        self._refresh_counter += 1
+        if not cats:
+            self.statusBar().showMessage(
+                "本轮无参与刷新的信息域（已禁用或未到倍率轮次），已跳过", 5000)
+            return
+        self.statusBar().showMessage(
+            f"刷新监控中：共 {len(ents)} 家主体（本轮参与域 {len(cats)}/{len(CATEGORIES)} 个）…")
         self._refresh_action.setEnabled(False)
-        self._worker = RefreshWorker(ents, parent=self)
+        self._worker = RefreshWorker(ents, cats, parent=self)
         self._worker.progress.connect(
             lambda i, n, name: self.statusBar().showMessage(f"刷新监控中（{i}/{n}）：{name}"))
         self._worker.done.connect(self._on_refresh_done)
@@ -433,6 +551,8 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         if SettingsDialog(self).exec():
             settings.reload()
+            self._load_ui_settings()
+            self.apply_visibility(self._vis)
             self._next_refresh = None
             self._update_status_bar()
             self.reload_data()

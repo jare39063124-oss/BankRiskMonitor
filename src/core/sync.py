@@ -14,7 +14,7 @@ CSV_HEADERS = ["企业名称", "统一社会信用代码", "省份", "城市", "
 
 # ---------- 同步 ----------
 def run_sync(ent: Enterprise) -> dict:
-    """对单个企业依次同步 news/biz_change/lawsuit/enforcement 四类事件并入库。
+    """对单个企业依次同步 news/biz_change/lawsuit/enforcement/social 等类目事件并入库。
 
     返回 {category: {inserted, source, error}}；insert_event 自动按
     (enterprise_id, category, title, source) 去重。

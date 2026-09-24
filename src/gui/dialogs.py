@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core import db, settings
-from ..core.models import CATEGORY_LABELS, Enterprise
+from ..core.models import CATEGORIES, CATEGORY_LABELS, Enterprise
 from ..core.paths import app_root, reports_dir
 from .workers import FnWorker
 
@@ -642,7 +642,24 @@ class MaterialDialog(QDialog):
 # 全局设置
 # =====================================================================
 class SettingsDialog(QDialog):
-    """四页签：监控设置 / 数据源设置 / AI 设置 / 报告设置。"""
+    """六页签：显示设置 / 频率设置 / 监控设置 / 数据源设置 / AI 设置 / 报告设置。"""
+
+    # 显示设置页的界面元素清单：key -> 标签
+    VISIBILITY_DEFS = [
+        ("map", "中央地图"),
+        ("enterprise_list", "企业清单"),
+        ("event_feed", "事件流"),
+        ("alerts", "预警列表"),
+        ("ai_summary", "AI 研判摘要"),
+        ("countdown", "状态栏刷新倒计时"),
+    ]
+
+    # 信息域频率倍率选项：文案 -> 倍率值
+    RATE_DEFS = [
+        ("0.5x（隔次执行）", 0.5),
+        ("1x（每轮执行）", 1.0),
+        ("2x（每轮执行）", 2.0),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -650,10 +667,16 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(560, 480)
 
         self.tabs = QTabWidget(self)
+        self.tabs.addTab(self._display_tab(), "显示设置")
+        self.tabs.addTab(self._frequency_tab(), "频率设置")
         self.tabs.addTab(self._monitor_tab(), "监控设置")
         self.tabs.addTab(self._sources_tab(), "数据源设置")
         self.tabs.addTab(self._ai_tab(), "AI 设置")
         self.tabs.addTab(self._report_tab(), "报告设置")
+
+        # 两处“刷新周期”输入保持同步（频率设置页 / 监控设置页）
+        self.refresh_spin.valueChanged.connect(self.freq_refresh_spin.setValue)
+        self.freq_refresh_spin.valueChanged.connect(self.refresh_spin.setValue)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -667,7 +690,88 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.tabs)
         lay.addWidget(btns)
 
-    # ---------- ① 监控设置 ----------
+    # ---------- ① 显示设置 ----------
+    def _display_tab(self):
+        w = QWidget(self)
+        saved = {}
+        try:
+            saved = json.loads(db.get_setting("panel_visibility", "{}"))
+        except Exception:
+            saved = {}
+
+        self.vis_checks = {}
+        box = QGroupBox("界面元素显示（保存后即时生效）")
+        bl = QVBoxLayout(box)
+        for key, label in self.VISIBILITY_DEFS:
+            cb = QCheckBox(label, self)
+            cb.setChecked(bool(saved.get(key, True)))
+            bl.addWidget(cb)
+            self.vis_checks[key] = cb
+
+        lay = QVBoxLayout(w)
+        lay.addWidget(box)
+        lay.addStretch(1)
+        return w
+
+    # ---------- ② 频率设置 ----------
+    def _frequency_tab(self):
+        w = QWidget(self)
+        cfg = settings.config()
+        app_cfg = cfg.get("app", {})
+        net_cfg = cfg.get("network", {})
+        saved = {}
+        try:
+            saved = json.loads(db.get_setting("category_frequency", "{}"))
+        except Exception:
+            saved = {}
+
+        self.freq_refresh_spin = QSpinBox(self)
+        self.freq_refresh_spin.setRange(0, 720)
+        self.freq_refresh_spin.setSuffix(" 分钟")
+        self.freq_refresh_spin.setValue(
+            int(app_cfg.get("refresh_interval_minutes", 30) or 0))
+        self.freq_refresh_spin.setSpecialValueText("关闭自动刷新")
+
+        self.cat_checks = {}
+        self.rate_combos = {}
+        form = QFormLayout()
+        form.addRow("全局刷新周期", self.freq_refresh_spin)
+        for cat in CATEGORIES:
+            conf = saved.get(cat) or {}
+            en = QCheckBox(CATEGORY_LABELS.get(cat, cat), self)
+            en.setChecked(bool(conf.get("enabled", True)))
+            combo = QComboBox(self)
+            for label, rate in self.RATE_DEFS:
+                combo.addItem(label, rate)
+            try:
+                cur = float(conf.get("rate", 1) or 1)
+            except (TypeError, ValueError):
+                cur = 1.0
+            idx = combo.findData(cur)
+            combo.setCurrentIndex(idx if idx >= 0 else 1)
+            self.cat_checks[cat] = en
+            self.rate_combos[cat] = combo
+            form.addRow(en, combo)
+
+        self.timeout_spin = QSpinBox(self)
+        self.timeout_spin.setRange(1, 300)
+        self.timeout_spin.setSuffix(" 秒")
+        self.timeout_spin.setValue(int(net_cfg.get("timeout_seconds", 15) or 15))
+        form.addRow("网络超时", self.timeout_spin)
+
+        tip = QLabel(
+            "倍率含义：0.5x=每两次全局刷新执行一次该域，1x/2x=每轮均执行；"
+            "禁用的信息域刷新时跳过不查询。全局刷新周期为 0 时关闭自动刷新。", self)
+        tip.setProperty("secondary", True)
+        tip.setWordWrap(True)
+
+        lay = QVBoxLayout(w)
+        lay.addLayout(form)
+        lay.addWidget(tip)
+        lay.addStretch(1)
+        return w
+
+    # ---------- ③ 监控设置 ----------
     def _monitor_tab(self):
         w = QWidget(self)
         cfg = settings.config()
@@ -699,7 +803,7 @@ class SettingsDialog(QDialog):
         lay.addStretch(1)
         return w
 
-    # ---------- ② 数据源设置 ----------
+    # ---------- ④ 数据源设置 ----------
     def _sources_tab(self):
         w = QWidget(self)
         self.src_tree = QTreeWidget(self)
@@ -751,7 +855,7 @@ class SettingsDialog(QDialog):
         parent.insertChild(new_idx, item)
         self.src_tree.setCurrentItem(item)
 
-    # ---------- ③ AI 设置 ----------
+    # ---------- ⑤ AI 设置 ----------
     def _ai_tab(self):
         w = QWidget(self)
         env = _read_env()
@@ -813,7 +917,7 @@ class SettingsDialog(QDialog):
         for it in self.model_list.selectedItems():
             self.model_list.takeItem(self.model_list.row(it))
 
-    # ---------- ④ 报告设置 ----------
+    # ---------- ⑥ 报告设置 ----------
     def _report_tab(self):
         w = QWidget(self)
         saved = {}
@@ -872,7 +976,13 @@ class SettingsDialog(QDialog):
         cfg["penetration"]["down_levels"] = int(self.down_spin.value())
         settings.save_config()
 
-        # ② 数据源启停与排序 -> config.yaml（按树节点顺序与勾选状态重建）
+        # ② 频率设置：全局刷新周期（与监控设置页同步输入）与网络超时 -> config.yaml
+        cfg["app"]["refresh_interval_minutes"] = int(self.freq_refresh_spin.value())
+        cfg.setdefault("network", {})
+        cfg["network"]["timeout_seconds"] = int(self.timeout_spin.value())
+        settings.save_config()
+
+        # ③ 数据源启停与排序 -> config.yaml（按树节点顺序与勾选状态重建）
         sources = {}
         for i in range(self.src_tree.topLevelItemCount()):
             root = self.src_tree.topLevelItem(i)
@@ -893,7 +1003,7 @@ class SettingsDialog(QDialog):
         settings.save_config()
         settings.reload()
 
-        # ③ AI 设置 -> model_policy.yaml + .env
+        # ④ AI 设置 -> model_policy.yaml + .env
         models = [{"id": self.model_list.item(i).text(), "cost": 0}
                   for i in range(self.model_list.count())]
         policy_path = os.path.join(app_root(), "model_policy.yaml")
@@ -911,9 +1021,22 @@ class SettingsDialog(QDialog):
             "OPENROUTER_HTTP_PROXY": self.ai_proxy_edit.text().strip(),
         })
 
-        # ④ 报告设置 -> app_settings
+        # ⑤ 报告设置 -> app_settings
         db.set_setting("report_sections", json.dumps(
             {k: cb.isChecked() for k, cb in self.chapter_checks.items()}))
         db.set_setting("report_save_dir", self.dir_edit.text().strip())
         db.set_setting("report_type", self.type_combo.currentText())
+
+        # ⑥ 显示设置 -> app_settings，并即时应用到主窗口（布局自动重排）
+        vis = {k: cb.isChecked() for k, cb in self.vis_checks.items()}
+        db.set_setting("panel_visibility", json.dumps(vis))
+        mw = self.parent()
+        if hasattr(mw, "apply_visibility"):
+            mw.apply_visibility(vis)
+
+        # ⑦ 频率设置：信息域启停与倍率 -> app_settings
+        db.set_setting("category_frequency", json.dumps({
+            cat: {"enabled": self.cat_checks[cat].isChecked(),
+                  "rate": float(self.rate_combos[cat].currentData())}
+            for cat in self.cat_checks}))
         self.accept()

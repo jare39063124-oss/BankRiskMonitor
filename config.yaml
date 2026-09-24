@@ -78,6 +78,32 @@ sources:
         base_url: ""
         api_key: ""
         vendor: qichacha
+  social:
+    - name: weibo
+      enabled: true
+      class: providers.social_weibo.WeiboProvider
+      params:
+        cookie: ""     # 登录态 Cookie，留空则不加 Cookie 头（未登录可见性有限）
+    - name: wechat_sogou
+      enabled: true
+      class: providers.social_wechat.SogouWeixinProvider
+      params:
+        cookie: ""
+    - name: douyin
+      enabled: true
+      class: providers.social_douyin.DouyinProvider
+      params:
+        cookie: ""
+    - name: kuaishou
+      enabled: true
+      class: providers.social_kuaishou.KuaishouProvider
+      params:
+        cookie: ""
+    - name: xiaohongshu
+      enabled: true
+      class: providers.social_xiaohongshu.XiaohongshuProvider
+      params:
+        cookie: ""
 
 network:
   timeout_seconds: 15

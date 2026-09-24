@@ -27,9 +27,9 @@ window.bridge = null;
 
 var SEV_COLORS = { high: "#D93026", medium: "#E8710A", low: "#F9AB00", none: "#1A73E8" };
 var SEV_LABELS = { high: "高危", medium: "中危", low: "关注", none: "平稳" };
-var CAT_COLORS = { enforcement: "#D93026", lawsuit: "#F9AB00", biz_change: "#E8710A", news: "#1A73E8" };
-var CAT_ORDER = ["enforcement", "lawsuit", "biz_change", "news"];
-var CAT_LABELS = { news: "舆情新闻", biz_change: "工商变更", lawsuit: "涉诉", enforcement: "被执行/查封" };
+var CAT_COLORS = { enforcement: "#D93026", lawsuit: "#F9AB00", biz_change: "#E8710A", news: "#1A73E8", social: "#8E44AD" };
+var CAT_ORDER = ["enforcement", "lawsuit", "biz_change", "news", "social"];
+var CAT_LABELS = { news: "舆情新闻", biz_change: "工商变更", lawsuit: "涉诉", enforcement: "被执行/查封", social: "社媒" };
 
 // 省份名归一化：与 china.json 的 name 字段对齐
 function normProv(p) {

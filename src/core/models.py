@@ -2,8 +2,8 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-CATEGORIES = ("news", "biz_change", "lawsuit", "enforcement")
-CATEGORY_LABELS = {"news": "舆情新闻", "biz_change": "工商变更", "lawsuit": "涉诉", "enforcement": "被执行/查封"}
+CATEGORIES = ("news", "biz_change", "lawsuit", "enforcement", "social")
+CATEGORY_LABELS = {"news": "舆情新闻", "biz_change": "工商变更", "lawsuit": "涉诉", "enforcement": "被执行/查封", "social": "社媒"}
 SEVERITIES = ("high", "medium", "low")
 SENTIMENTS = ("negative", "neutral", "positive")
 

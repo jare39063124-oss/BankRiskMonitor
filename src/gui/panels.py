@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from ..core import settings
 from ..core.models import CATEGORIES, CATEGORY_LABELS
 
 ROLE_ENT_ID = Qt.ItemDataRole.UserRole
@@ -120,7 +121,12 @@ class EnterpriseListPanel(QGroupBox):
 
 
 class EventFeedPanel(QGroupBox):
-    """右上：事件流，支持按信息类型与来源筛选，并接受地图光斑联动过滤。"""
+    """右上：事件流，支持按信息类型与来源筛选，并接受地图光斑联动过滤。
+
+    - 类型下拉由 core.models.CATEGORIES + CATEGORY_LABELS 动态生成（含“社媒”）；
+    - 来源下拉从 config.yaml sources 各段 name 动态聚合（含社媒五源），
+      并合并当前事件中出现但未登记的来源。
+    """
 
     event_filters_changed = Signal(str, str)  # category, source（空串=全部）
 
@@ -181,12 +187,22 @@ class EventFeedPanel(QGroupBox):
         self._render()
 
     def _rebuild_source_combo(self):
+        """来源下拉动态聚合：config.yaml sources 各段 name 优先（保持登记顺序），
+        再合并事件中出现但未登记的来源；无事件时也可筛选全部登记来源。"""
         cur = self.source_combo.currentData()
-        sources = sorted({e.source for e in self._all_events if e.source})
+        names = []
+        for spec_list in settings.config().get("sources", {}).values():
+            for spec in spec_list or []:
+                name = str(spec.get("name", "") or "")
+                if name and name not in names:
+                    names.append(name)
+        for e in self._all_events:
+            if e.source and e.source not in names:
+                names.append(e.source)
         self.source_combo.blockSignals(True)
         self.source_combo.clear()
         self.source_combo.addItem("全部来源", "")
-        for s in sources:
+        for s in names:
             self.source_combo.addItem(s, s)
         if cur:
             idx = self.source_combo.findData(cur)

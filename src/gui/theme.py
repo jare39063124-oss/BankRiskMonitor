@@ -21,6 +21,7 @@ CATEGORY_COLORS = {
     "biz_change": "#E8710A",  # 工商变更
     "lawsuit": "#F9AB00",     # 涉诉
     "enforcement": "#D93026", # 被执行/查封
+    "social": "#8E44AD",      # 社媒
 }
 
 # 语义色背景（预警行）
