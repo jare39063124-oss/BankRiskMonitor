@@ -277,7 +277,7 @@ class SocialDbTest(DbTestBase):
     def test_run_sync_includes_social(self):
         def fake_rwf(cat, ent):
             if cat == "social":
-                return [Event(category="social", title="微博爆料",
+                return [Event(category="social", title="测试公司微博爆料",
                               source="weibo")], "weibo"
             return [], f"{cat}: empty"
 

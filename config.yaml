@@ -3,6 +3,7 @@ app:
   name: BankRiskMonitor
   refresh_interval_minutes: 30   # 定时刷新周期（0=关闭自动刷新）
   lookback_years: 3              # 舆情追溯窗口（年）：入库时过滤掉早于该时间的事件（无日期的保留）
+  relevance_filter: strict       # 相关性过滤：strict=只保留标题/摘要含主体名或核心词的事件；off=不过滤
   proxy: ""                      # HTTP 代理，如 http://127.0.0.1:7890；留空不使用
 
 penetration:
@@ -43,7 +44,9 @@ sources:
     - name: aiqicha
       enabled: true
       class: providers.biz_aiqicha.AiqichaProvider
-      params: {}
+      params:
+        # 可选：浏览器登录爱企查后 F12 复制 Cookie 填入，可解除未登录每日配额限制
+        cookie: ""
     - name: juhe_ent
       enabled: true
       class: providers.biz_juhe.JuheEnterpriseProvider
@@ -71,8 +74,9 @@ sources:
       enabled: false
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""
-        api_key: ""
+        base_url: ""      # 企查查 https://api.qichacha.com / 天眼查 https://open.api.tianyancha.com
+        api_key: ""       # 企查查=AppKey；天眼查=TOKEN（需企业实名认证开放平台）
+        secret_key: ""    # 企查查=SecretKey（账号安全页获取）
         vendor: qichacha
   enforcement:
     - name: zxgk
@@ -83,8 +87,9 @@ sources:
       enabled: false
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""
-        api_key: ""
+        base_url: ""      # 企查查 https://api.qichacha.com / 天眼查 https://open.api.tianyancha.com
+        api_key: ""       # 企查查=AppKey；天眼查=TOKEN（需企业实名认证开放平台）
+        secret_key: ""    # 企查查=SecretKey（账号安全页获取）
         vendor: qichacha
   social:
     - name: weibo

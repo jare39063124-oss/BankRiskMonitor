@@ -96,10 +96,14 @@ var geoReady = false;
 var pending = null;          // [spotsJson, mode]
 var curSpots = [];           // 当前渲染的光点原始数据
 var curMode = "severity";
-var curLevel = "china";      // china | province
+var curLevel = "china";      // china | province | district
 var curProvName = "";
+var curCityName = "";
 var window_bridge = null;
-
+var provGeoRaw = null;       // 省级（市级边界）缓存，区县返回省时复用
+var cityAdcode = {};         // 省级图内 城市/地区名 -> adcode
+var mapCache = {};           // adcode -> geojson 缓存
+var DISTRICT_PROV = { "辽宁省": 1, "吉林省": 1, "黑龙江省": 1 };  // 支持区县级下钻的省份
 var SEV_COLORS = { high: "#FF4D4D", medium: "#FFA033", low: "#FFD84D", none: "#00FF9C" };
 var SEV_LABELS = { high: "高危", medium: "中危", low: "关注", none: "平稳" };
 var CAT_COLORS = { enforcement: "#FF4D4D", lawsuit: "#FFD84D", biz_change: "#FFA033", news: "#4DA3FF", social: "#C77DFF" };
@@ -109,8 +113,9 @@ var NEON = "#00FF9C";
 
 // 地图样式：黑底 + 荧光绿边界 + 辉光
 function geoStyle() {
+  var mapName = curLevel === "china" ? "china" : (curLevel === "province" ? "prov" : "dist");
   return {
-    map: curLevel === "china" ? "china" : "prov",
+    map: mapName,
     roam: true, zoom: curLevel === "china" ? 1.12 : 1.0,
     scaleLimit: { min: 0.6, max: 12 },
     itemStyle: {
@@ -125,6 +130,18 @@ function geoStyle() {
     },
     select: { disabled: true }
   };
+}
+
+function normCity(p) {
+  if (!p) return "";
+  var s = String(p).replace(/\s/g, "");
+  var suffixes = ["自治州", "地区", "盟", "市"];
+  for (var i = 0; i < suffixes.length; i++) {
+    if (s.length > suffixes[i].length && s.slice(-suffixes[i].length) === suffixes[i]) {
+      return s.slice(0, s.length - suffixes[i].length);
+    }
+  }
+  return s;
 }
 
 function normProv(p) {
@@ -186,8 +203,11 @@ xhr.onload = function () {
       if (params.componentType === "series") {
         onSpotClicked(params.data);
       } else if (params.componentType === "geo") {
-        // 点击省份区域：全国层级下钻到省级市级视图
-        if (curLevel === "china" && params.name) drillTo(params.name);
+        if (curLevel === "china" && params.name) {
+          drillTo(params.name);
+        } else if (curLevel === "province" && params.name && DISTRICT_PROV[curProvName]) {
+          drillToDistrict(params.name);   // 黑吉辽：市 -> 区县
+        }
       }
     });
     geoReady = true;
@@ -216,9 +236,17 @@ function drillTo(provName) {
     try {
       var g = JSON.parse(x2.responseText);
       if (!g.features || !g.features.length) throw new Error("empty");
+      provGeoRaw = g;
+      mapCache[adcode] = g;
+      cityAdcode = {};
+      for (var i = 0; i < g.features.length; i++) {
+        var p = g.features[i].properties || {};
+        if (p.name && p.adcode) cityAdcode[p.name] = String(p.adcode);
+      }
       echarts.registerMap("prov", g);
       curLevel = "province";
       curProvName = provName;
+      curCityName = "";
       chart.setOption({ geo: geoStyle() });
       document.getElementById("crumb").innerText = "中国 · " + provName;
       document.getElementById("back").style.display = "block";
@@ -234,20 +262,64 @@ function drillTo(provName) {
   x2.send();
 }
 
-function backToChina() {
-  curLevel = "china";
-  curProvName = "";
-  hidePopup();
-  chart.setOption({ geo: geoStyle() });
-  document.getElementById("crumb").innerText = "中国 · 全国";
-  document.getElementById("back").style.display = "none";
-  renderCurSpots();
+// 黑吉辽：市级 -> 区县级
+function drillToDistrict(cityName) {
+  if (curLevel !== "province" || !DISTRICT_PROV[curProvName]) return;
+  var adcode = cityAdcode[cityName];
+  if (!adcode) return;
+  document.getElementById("loading").style.display = "flex";
+  var finish = function (g) {
+    document.getElementById("loading").style.display = "none";
+    echarts.registerMap("dist", g);
+    curLevel = "district";
+    curCityName = cityName;
+    chart.setOption({ geo: geoStyle() });
+    document.getElementById("crumb").innerText = "中国 · " + curProvName + " · " + cityName;
+    renderCurSpots();
+  };
+  if (mapCache[adcode]) { finish(mapCache[adcode]); return; }
+  var x3 = new XMLHttpRequest();
+  x3.open("GET", "geo/districts/" + adcode + "_full.json", true);
+  x3.onload = function () {
+    try {
+      var g = JSON.parse(x3.responseText);
+      if (!g.features || !g.features.length) throw new Error("empty");
+      mapCache[adcode] = g;
+      finish(g);
+    } catch (e) {
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("crumb").innerText =
+        "中国 · " + curProvName + " · " + cityName + "（无区县级边界）";
+    }
+  };
+  x3.onerror = function () { document.getElementById("loading").style.display = "none"; };
+  x3.send();
 }
 
-document.getElementById("back").onclick = backToChina;
-// 双击空白处也可返回
+function backOneLevel() {
+  hidePopup();
+  if (curLevel === "district") {
+    curLevel = "province";
+    curCityName = "";
+    chart.setOption({ geo: geoStyle() });
+    document.getElementById("crumb").innerText = "中国 · " + curProvName;
+    renderCurSpots();
+    return;
+  }
+  if (curLevel === "province") {
+    curLevel = "china";
+    curProvName = "";
+    chart.setOption({ geo: geoStyle() });
+    document.getElementById("crumb").innerText = "中国 · 全国";
+    document.getElementById("back").style.display = "none";
+    renderCurSpots();
+  }
+}
+
+document.getElementById("back").onclick = backOneLevel;
+// 双击空白处也可逐级返回
 document.getElementById("map").ondblclick = function () {
-  if (curLevel === "province") backToChina();
+  if (curLevel !== "china") backOneLevel();
 };
 
 // ================= 光点渲染 =================
@@ -279,11 +351,16 @@ function renderCurSpots() {
   var centers = window.__centers || {};
   var data = [];
   var used = {};  // 同城市防重叠：确定性偏移
-  // 省级视图只渲染本省光点（其它省的点不在该坐标系内，避免错位残留）
+  // 分级过滤：省级只渲染本省光点；区县级只渲染本市光点
   var curNorm = normProv(curProvName);
+  var curNormCity = normCity(curCityName);
   for (var i = 0; i < curSpots.length; i++) {
     var sp = curSpots[i];
     if (curLevel === "province" && normProv(sp.province) !== curNorm) continue;
+    if (curLevel === "district") {
+      var sameCity = normCity(sp.city) === curNormCity && curNormCity;
+      if (!sameCity) continue;
+    }
     var c = null;
     if (sp.lng != null && sp.lat != null) {
       c = [sp.lng, sp.lat];                       // Python 端已解析好的城市坐标

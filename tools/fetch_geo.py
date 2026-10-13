@@ -35,6 +35,8 @@ PROVINCES = [
 
 # 无市级数据的省级行政区（404）：跳过，下钻时回退全国轮廓
 NO_CITY_DATA = {"710000", "810000", "820000"}
+# 区县级下钻范围：黑吉辽 + 直辖市（直辖市级 full 本身即区县，无需额外下载）
+DISTRICT_PROVINCES = {"210000": "辽宁省", "220000": "吉林省", "230000": "黑龙江省"}
 
 
 def download(adcode: str, retries: int = 3) -> dict:
@@ -106,9 +108,41 @@ def main() -> int:
     with open(out_centers, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
 
+    # ---------- 区县级：黑吉辽（市 adcode 的 _full 即区县边界） ----------
+    dist_dir = os.path.join(GEO_DIR, "districts")
+    os.makedirs(dist_dir, exist_ok=True)
+    dist_count = dist_total = 0
+    for adcode, name in PROVINCES:
+        if adcode not in DISTRICT_PROVINCES:
+            continue
+        prov_path = os.path.join(PROV_DIR, f"{adcode}_full.json")
+        with open(prov_path, encoding="utf-8") as f:
+            cities = json.load(f).get("features", [])
+        for feat in cities:
+            c_adcode = str(feat.get("properties", {}).get("adcode") or "")
+            c_name = str(feat.get("properties", {}).get("name") or "")
+            if not c_adcode or not c_name:
+                continue
+            out = os.path.join(dist_dir, f"{c_adcode}_full.json")
+            if os.path.exists(out) and os.path.getsize(out) > 1000:
+                dist_count += 1
+                dist_total += os.path.getsize(out)
+                continue
+            try:
+                g = download(c_adcode)
+                with open(out, "w", encoding="utf-8") as f:
+                    json.dump(g, f, ensure_ascii=False, separators=(",", ":"))
+                dist_count += 1
+                dist_total += os.path.getsize(out)
+                print(f"[dist] {name}·{c_name} {c_adcode}  {os.path.getsize(out) / 1024:.0f} KB")
+                time.sleep(0.15)
+            except Exception as e:  # noqa: BLE001
+                print(f"[fail] {name}·{c_name} {c_adcode}: {e}")
+
     total = sum(os.path.getsize(os.path.join(PROV_DIR, x)) for x in os.listdir(PROV_DIR))
     print(f"\n城市 {len(city_centers)} 个、省级中心 {len(prov_centers)} 个")
-    print(f"provinces 总体积 {total / 1048576:.1f} MB -> {out_centers}")
+    print(f"provinces 总体积 {total / 1048576:.1f} MB；区县文件 {dist_count} 个共 {dist_total / 1048576:.1f} MB")
+    print(f"-> {out_centers}")
     return 0
 
 

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from . import db
 from .models import CATEGORIES, Enterprise
+from .relevance import filter_relevant
 
 try:
     from ..providers.base import run_with_fallback
@@ -50,10 +51,18 @@ def run_sync(ent: Enterprise) -> dict:
         ent.id = db.upsert_enterprise(ent.name, ent.credit_code,
                                       ent.province, ent.city, ent.credit_note)
     cutoff = lookback_cutoff()
+    rel_mode = "strict"
+    try:
+        rel_mode = str(settings_config().get("app", {}).get("relevance_filter", "strict")
+                       or "strict").lower()
+    except (TypeError, ValueError):
+        rel_mode = "strict"
     results = {}
     for cat in CATEGORIES:
         try:
             events, source = run_with_fallback(cat, ent)
+            fetched = len(events)
+            events = filter_relevant(events, ent.name, rel_mode)  # 相关性过滤
             inserted = 0
             dropped = 0
             for ev in events:
@@ -64,6 +73,7 @@ def run_sync(ent: Enterprise) -> dict:
                 if db.insert_event(ev):
                     inserted += 1
             results[cat] = {"inserted": inserted, "dropped_old": dropped,
+                            "filtered": fetched - len(events),
                             "source": source if events else "",
                             "error": "" if events else source}
         except Exception as e:  # run_with_fallback 内部已兜底，此处防御额外异常

@@ -13,7 +13,13 @@ except ImportError:
     from ..core.models import Event, Enterprise
     from .base import ProviderBase
 
+try:
+    from src.core import settings as _settings
+except ImportError:
+    from ..core import settings as _settings
+
 SEARCH_URL = "https://aiqicha.baidu.com/s"
+FILTER_URL = "https://aiqicha.baidu.com/s/advanceFilterAjax"   # JSON 搜索接口
 CHANGE_URL = "https://aiqicha.baidu.com/detail/newChangeListAjax"
 HOLDER_URL = "https://aiqicha.baidu.com/detail/newHolderAjax"
 INVEST_URL = "https://aiqicha.baidu.com/detail/newInvestmentAjax"
@@ -64,27 +70,80 @@ class AiqichaProvider(ProviderBase):
                   "Accept": "application/json, text/html"})
         cookie = self.params.get("cookie") or ""
         if cookie:
-            h["Cookie"] = cookie  # 需登录态时由配置注入（latin-1 字符）
+            h["Cookie"] = cookie  # 登录态 Cookie（config 注入），未登录每日配额有限
         return h
 
     # ---------- 基础请求 ----------
+    def _session_get(self, url: str, params: dict = None):
+        """（保留给 _pid_via_json 之外的调用方）带会话预热的主页流 GET。"""
+        import requests
+        if not hasattr(self, "_session"):
+            self._session = requests.Session()
+            try:
+                self._session.get("https://aiqicha.baidu.com/",
+                                  headers=self.headers(), timeout=self.timeout)
+            except Exception:  # noqa: BLE001  预热失败不阻断
+                pass
+        self._throttle()
+        kw = {"headers": self.headers(), "timeout": self.timeout}
+        proxy = _settings.config().get("app", {}).get("proxy", "")
+        if proxy:
+            kw["proxies"] = {"http": proxy, "https": proxy}
+        return self._session.get(url, params=params, **kw)
+
     def _search_pid(self, name: str) -> str:
-        """搜索页解析企业 pid。"""
+        """搜索解析企业 pid：HTML 搜索页（编码修复版）为主，JSON 接口反爬重试。"""
         resp = self.http_get(SEARCH_URL, params={"q": name})
         if resp.status_code != 200:
             raise RuntimeError(f"爱企查搜索 HTTP {resp.status_code}")
+        resp.encoding = "utf-8"  # 修复：默认编码猜测会把"安全验证"变乱码导致漏检
         text = resp.text
-        if "安全验证" in text or len(text) < 500:
-            raise RuntimeError("爱企查搜索被反爬拦截")
+        if "安全验证" in text or "wappass" in text or len(text) < 500:
+            # HTML 被拦时尝试 JSON 搜索接口（会话流，成功率更高）
+            pid = self._pid_via_json(name)
+            if pid:
+                return pid
+            raise RuntimeError("爱企查搜索被反爬拦截（可在 config aiqicha.params.cookie 填登录 Cookie）")
         m = re.search(r"company_detail_(\d+)", text) or re.search(r'"pid"\s*:\s*"?(\d+)', text)
         if not m:
             raise RuntimeError("爱企查未解析到企业 pid")
         return m.group(1)
 
+    def _pid_via_json(self, name: str) -> str:
+        """会话流 JSON 搜索接口：预热主页拿 Cookie 后调用 advanceFilterAjax。"""
+        try:
+            import requests
+            if not hasattr(self, "_session"):
+                self._session = requests.Session()
+                self._session.get("https://aiqicha.baidu.com/",
+                                  headers=self.headers(), timeout=self.timeout)
+            self._throttle()
+            resp = self._session.get(
+                FILTER_URL, params={"q": name, "p": 1, "s": 10, "t": 0},
+                headers=self.headers(), timeout=self.timeout)
+            resp.encoding = "utf-8"
+            data = resp.json()
+            payload = (data.get("data") or {}) if isinstance(data, dict) else {}
+            lst = payload.get("list") or []
+            if lst:
+                pid = str(lst[0].get("pid") or "")
+                if pid:
+                    return pid
+            limit = payload.get("limitForward") or {}
+            if str(limit.get("userType") or "") == "nologin":
+                raise RuntimeError(
+                    "爱企查未登录配额为 0：请在 config.yaml aiqicha.params.cookie "
+                    "填入浏览器登录 Cookie（F12 复制），或等待次日配额")
+        except RuntimeError:
+            raise
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _get_json(self, url: str, params: dict) -> dict:
         resp = self.http_get(url, params=params)
         if resp.status_code != 200:
             raise RuntimeError(f"爱企查接口 HTTP {resp.status_code}")
+        resp.encoding = "utf-8"
         try:
             return resp.json()
         except ValueError:

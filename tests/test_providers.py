@@ -120,7 +120,7 @@ class RunSyncTest(BaseDBTest):
     def test_run_sync_insert_and_dedup(self):
         def fake_rwf(cat, ent):
             if cat == "news":
-                return [Event(category="news", title="测试新闻", source="baidu_news")], "baidu_news"
+                return [Event(category="news", title="测试公司一则新闻", source="baidu_news")], "baidu_news"
             return [], f"{cat}: empty"
 
         ent = Enterprise(id=1, name="测试公司")
@@ -428,7 +428,8 @@ class CommercialApiTest(unittest.TestCase):
 
     def test_other_vendor_not_implemented(self):
         from src.providers import biz_commercial as m
-        p = m.CommercialApiProvider({"base_url": "http://fake", "api_key": "k", "vendor": "qichacha"})
+        # qichacha 已实现；未知 vendor 仍应 NotImplementedError
+        p = m.CommercialApiProvider({"base_url": "http://fake", "api_key": "k", "vendor": "foo"})
         with self.assertRaises(NotImplementedError):
             p.fetch(Enterprise(id=1, name="测试公司"))
 
