@@ -54,16 +54,25 @@ sources:
         # 聚合数据 juhe.cn《企业工商信息基础版》(ID 515)：注册实名后申请，首次送 5 次
         # 数据源为国家公示网；api_key 留空自动跳过该源
         api_key: ""
+    - name: apizero
+      enabled: true
+      class: providers.biz_apizero.ApiZeroProvider
+      params:
+        # ApiZero（极数本源）企业工商查询：无需 Key 匿名即可用（5 次/日、1 QPS）
+        # 填 api_key 后提升为 10 次/日（header Bearer + params key 双通道）
+        api_key: ""
     - name: gsxt
       enabled: false
       class: providers.biz_gsxt.GsxtProvider
       params: {}
     - name: commercial_api
-      enabled: false
+      enabled: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""     # 天眼查/企查查/白牛等商业 API 地址（需企业实名认证）
-        api_key: ""
+        base_url: ""     # 留空使用适配器内置默认地址（天眼查开放平台）
+        # 天眼查个人 Key（TOKEN）：鉴权有效但个人账号接口未开通（300005），
+        # 运行报错由 fallback 自动跳过；去天眼查开放平台申请权限后自动生效
+        api_key: "c3b3bfcb-9759-46af-8752-a21d220e71f6"
         vendor: tianyancha
   lawsuit:
     - name: wenshu
@@ -71,26 +80,26 @@ sources:
       class: providers.court_wenshu.WenshuProvider
       params: {}
     - name: commercial_api
-      enabled: false
+      enabled: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""      # 企查查 https://api.qichacha.com / 天眼查 https://open.api.tianyancha.com
-        api_key: ""       # 企查查=AppKey；天眼查=TOKEN（需企业实名认证开放平台）
+        base_url: ""      # 留空使用适配器内置默认地址（天眼查开放平台）
+        api_key: "c3b3bfcb-9759-46af-8752-a21d220e71f6"   # 天眼查 TOKEN（个人账号接口未开通 300005，报错自动 fallback）
         secret_key: ""    # 企查查=SecretKey（账号安全页获取）
-        vendor: qichacha
+        vendor: tianyancha
   enforcement:
     - name: zxgk
       enabled: true
       class: providers.court_zxgk.ZxgkProvider
       params: {}
     - name: commercial_api
-      enabled: false
+      enabled: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""      # 企查查 https://api.qichacha.com / 天眼查 https://open.api.tianyancha.com
-        api_key: ""       # 企查查=AppKey；天眼查=TOKEN（需企业实名认证开放平台）
+        base_url: ""      # 留空使用适配器内置默认地址（天眼查开放平台）
+        api_key: "c3b3bfcb-9759-46af-8752-a21d220e71f6"   # 天眼查 TOKEN（个人账号接口未开通 300005，报错自动 fallback）
         secret_key: ""    # 企查查=SecretKey（账号安全页获取）
-        vendor: qichacha
+        vendor: tianyancha
   social:
     - name: weibo
       enabled: true
