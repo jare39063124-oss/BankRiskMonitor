@@ -54,7 +54,12 @@ def load_providers(category: str):
         try:
             mod_path, cls_name = spec["class"].rsplit(".", 1)
             import importlib
-            cls = getattr(importlib.import_module(mod_path), cls_name)
+            try:
+                mod = importlib.import_module(mod_path)
+            except ImportError:
+                # 开发模式下顶层 providers 包不可见，回退 src.providers.*
+                mod = importlib.import_module("src." + mod_path)
+            cls = getattr(mod, cls_name)
             out.append(cls(spec.get("params", {})))
         except Exception as e:  # 单个源加载失败不影响其他源
             log.warning("provider %s load failed: %s", spec.get("name"), e)

@@ -1,5 +1,6 @@
 """同步编排：对单个企业按类目调用数据源并入库；企业名单 CSV/XLSX 导入导出。"""
 import csv
+from datetime import datetime
 
 from . import db
 from .models import CATEGORIES, Enterprise
@@ -13,28 +14,60 @@ CSV_HEADERS = ["企业名称", "统一社会信用代码", "省份", "城市", "
 
 
 # ---------- 同步 ----------
+def lookback_cutoff() -> str:
+    """追溯窗口起始日期（YYYY-MM-DD）：app.lookback_years，缺省 3 年；0/负数=不过滤。"""
+    years = 3
+    try:
+        years = float(settings_config().get("app", {}).get("lookback_years", 3) or 3)
+    except (TypeError, ValueError):
+        years = 3.0
+    if years <= 0:
+        return ""
+    return (datetime.now().replace(year=datetime.now().year - int(years))
+            .strftime("%Y-%m-%d"))
+
+
+def settings_config() -> dict:
+    from . import settings
+    return settings.config()
+
+
+def _in_lookback(occurred_at: str, cutoff: str) -> bool:
+    """无日期事件保留；有日期的按 ISO 字符串比较过滤。"""
+    if not cutoff or not occurred_at:
+        return True
+    return str(occurred_at)[:10] >= cutoff
+
+
 def run_sync(ent: Enterprise) -> dict:
     """对单个企业依次同步 news/biz_change/lawsuit/enforcement/social 等类目事件并入库。
 
     返回 {category: {inserted, source, error}}；insert_event 自动按
     (enterprise_id, category, title, source) 去重。
+    入库前按 app.lookback_years 追溯窗口过滤（无日期事件保留）。
     """
     if ent.id is None:
         ent.id = db.upsert_enterprise(ent.name, ent.credit_code,
                                       ent.province, ent.city, ent.credit_note)
+    cutoff = lookback_cutoff()
     results = {}
     for cat in CATEGORIES:
         try:
             events, source = run_with_fallback(cat, ent)
             inserted = 0
+            dropped = 0
             for ev in events:
+                if not _in_lookback(ev.occurred_at, cutoff):
+                    dropped += 1
+                    continue
                 ev.enterprise_id = ent.id
                 if db.insert_event(ev):
                     inserted += 1
-            results[cat] = {"inserted": inserted, "source": source if events else "",
+            results[cat] = {"inserted": inserted, "dropped_old": dropped,
+                            "source": source if events else "",
                             "error": "" if events else source}
         except Exception as e:  # run_with_fallback 内部已兜底，此处防御额外异常
-            results[cat] = {"inserted": 0, "source": "", "error": str(e)}
+            results[cat] = {"inserted": 0, "dropped_old": 0, "source": "", "error": str(e)}
     return results
 
 

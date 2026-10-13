@@ -65,6 +65,9 @@ def parse_time(s: str) -> str:
 class BaiduNewsProvider(ProviderBase):
     name = "baidu_news"
     category = "news"
+    # 追溯加深：翻页抓取（rn 每页条数，pages 页数）；pn 每页偏移
+    pages = 3
+    page_size = 10
 
     def headers(self) -> dict:
         h = super().headers()
@@ -72,14 +75,28 @@ class BaiduNewsProvider(ProviderBase):
         return h
 
     def fetch(self, ent: Enterprise) -> list:
-        resp = self.http_get(SEARCH_URL, params={
-            "wd": ent.name, "tn": "news", "rtt": 4, "bsst": 1, "cl": 2, "rn": 10})
-        if resp.status_code != 200:
-            raise RuntimeError(f"百度新闻 HTTP {resp.status_code}")
-        text = resp.text
-        if "百度安全验证" in text or "wappass" in text:
-            raise RuntimeError("百度新闻触发反爬验证")
-        events = self._parse(text, ent)
+        events, seen = [], set()
+        for pn in range(0, self.pages * self.page_size, self.page_size):
+            resp = self.http_get(SEARCH_URL, params={
+                "wd": ent.name, "tn": "news", "rtt": 4, "bsst": 1, "cl": 2,
+                "rn": self.page_size, "pn": pn})
+            if resp.status_code != 200:
+                raise RuntimeError(f"百度新闻 HTTP {resp.status_code}")
+            text = resp.text
+            if "百度安全验证" in text or "wappass" in text:
+                if not events:
+                    raise RuntimeError("百度新闻触发反爬验证")
+                break  # 已有结果时中断翻页，不整体失败
+            page_events = self._parse(text, ent)
+            fresh = 0
+            for ev in page_events:
+                if ev.title in seen:
+                    continue
+                seen.add(ev.title)
+                events.append(ev)
+                fresh += 1
+            if fresh == 0:
+                break  # 后续页无新结果，提前结束
         if not events:
             raise RuntimeError("百度新闻未解析到结果（可能被反爬或无结果）")
         return events
