@@ -48,6 +48,36 @@ RADIUS = 4                  # 卡片圆角
 SPACE = 8                   # 统一 8px 间距栅格
 
 
+def apply_palette(app):
+    """设置应用级深色调色板。
+
+    QSS 的 color 属性对 item view 条目文本（走 QPalette.Text 角色）不生效，
+    必须在调色板层显式指定，否则列表/表格未选中条目文字会落回系统默认灰暗色。
+    """
+    from PySide6.QtGui import QColor, QPalette
+
+    def _role(group, color, *roles):
+        for r in roles:
+            pal.setColor(group, r, QColor(color))
+
+    pal = app.palette()
+    active = QPalette.ColorGroup.Active
+    disabled = QPalette.ColorGroup.Disabled
+    R = QPalette.ColorRole
+    _role(active, TEXT_MAIN, R.WindowText, R.Text, R.ButtonText, R.BrightText)
+    _role(active, BG_WINDOW, R.Window)
+    _role(active, BG_CARD, R.Base)
+    _role(active, "#0D131C", R.AlternateBase)
+    _role(active, BG_INPUT, R.Button)
+    _role(active, PRIMARY_BG, R.Highlight)
+    _role(active, PRIMARY, R.HighlightedText)
+    _role(active, BG_CARD, R.ToolTipBase)
+    _role(active, PRIMARY, R.ToolTipText)
+    _role(active, TEXT_DISABLE, R.PlaceholderText)
+    _role(disabled, TEXT_DISABLE, R.WindowText, R.Text, R.ButtonText)
+    app.setPalette(pal)
+
+
 def get_app_qss() -> str:
     """返回全局样式表。黑色卡片式 QMainWindow/QGroupBox、三态按钮、表格、页签、输入控件、状态栏。"""
     return f"""
@@ -155,6 +185,7 @@ QPushButton[danger="true"]:pressed {{
 /* ---------- 输入控件 ---------- */
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit {{
     background: {BG_INPUT};
+    color: {TEXT_MAIN};
     border: 1px solid {BORDER};
     border-radius: {RADIUS}px;
     padding: 4px 6px;
@@ -223,8 +254,10 @@ QCheckBox:hover, QRadioButton:hover {{
 }}
 
 /* ---------- 列表 / 表格 / 树 ---------- */
+/* 注意：item 文本走 QPalette.Text 角色，全局 * 选择器不生效，必须在此显式声明亮色 */
 QListWidget, QTreeWidget, QTableView, QListView {{
     background: {BG_CARD};
+    color: {TEXT_MAIN};
     border: 1px solid {BORDER};
     border-radius: {RADIUS}px;
     alternate-background-color: #0D131C;

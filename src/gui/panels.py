@@ -82,6 +82,8 @@ class EnterpriseListPanel(QGroupBox):
         tag = f"（{ent.relation}）" if ent.relation else ""
         region = f" · {ent.province}" if ent.province else ""
         item = QListWidgetItem(f"{prefix}{ent.name}{tag}{region}")
+        # QSS 激活时 item 文本不继承全局 color/palette，必须显式指定前景色
+        item.setForeground(QBrush(QColor(theme.TEXT_MAIN)))
         item.setData(ROLE_ENT_ID, ent.id or 0)
         item.setToolTip(ent.credit_note or ent.name)
         self.list.addItem(item)
@@ -228,6 +230,8 @@ class EventFeedPanel(QGroupBox):
             ])
             item.setToolTip(2, e.summary or e.title)
             item.setData(0, ROLE_ENT_ID, e.enterprise_id)
+            for col in range(4):  # 常规列亮色（严重程度列随后单独着色）
+                item.setForeground(col, QBrush(QColor(theme.TEXT_MAIN)))
             item.setForeground(4, QBrush(_sev_color(e.severity)))
             self.tree.addTopLevelItem(item)
 
@@ -286,6 +290,7 @@ class AlertPanel(QGroupBox):
             bg = QColor(theme.BG_ALERT_HIGH if e.severity == "high" else theme.BG_ALERT_MEDIUM)
             for col in range(4):
                 item.setBackground(col, QBrush(bg))
+                item.setForeground(col, QBrush(QColor(theme.TEXT_MAIN)))
             self.tree.addTopLevelItem(item)
         if not events:
             self.tree.addTopLevelItem(QTreeWidgetItem(["—", "—", "—", "暂无预警"]))

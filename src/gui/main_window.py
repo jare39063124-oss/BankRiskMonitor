@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
 
         app = QApplication.instance()
         if app is not None:
+            theme.apply_palette(app)
             app.setStyleSheet(theme.get_app_qss())
 
         self._worker = None
