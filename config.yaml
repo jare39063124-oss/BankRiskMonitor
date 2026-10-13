@@ -44,6 +44,13 @@ sources:
       enabled: true
       class: providers.biz_aiqicha.AiqichaProvider
       params: {}
+    - name: juhe_ent
+      enabled: true
+      class: providers.biz_juhe.JuheEnterpriseProvider
+      params:
+        # 聚合数据 juhe.cn《企业工商信息基础版》(ID 515)：注册实名后申请，首次送 5 次
+        # 数据源为国家公示网；api_key 留空自动跳过该源
+        api_key: ""
     - name: gsxt
       enabled: false
       class: providers.biz_gsxt.GsxtProvider
@@ -52,7 +59,7 @@ sources:
       enabled: false
       class: providers.biz_commercial.CommercialApiProvider
       params:
-        base_url: ""     # 天眼查/企查查/白牛等商业 API 地址
+        base_url: ""     # 天眼查/企查查/白牛等商业 API 地址（需企业实名认证）
         api_key: ""
         vendor: tianyancha
   lawsuit:
