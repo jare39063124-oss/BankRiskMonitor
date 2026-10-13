@@ -1,0 +1,6 @@
+- [x] Task 1: fetch_geo.py + 下载数据（31省市级边界 3.5MB + 363 城市坐标）
+- [x] Task 2: core/geo.py
+- [x] Task 3: theme.py 深色重写
+- [x] Task 4: map.html 重写（下钻/弹层/荧光绿）
+- [x] Task 5: 数据链路改造（城市坐标+事件载荷）
+- [x] Task 6: 演示数据+单测+验收（93 测试全绿）

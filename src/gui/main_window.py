@@ -252,8 +252,11 @@ class MainWindow(QMainWindow):
         self._update_summary(events)
 
     def _reload_map(self, ents):
+        """地图聚合：光点按企业注册城市定位（geo 回退省中心），附带最新事件供弹层。"""
+        from ..core import geo
         events = db.list_events(monitored_only=True, limit=2000)
         agg = {}
+        latest = {}  # enterprise_id -> [Event]（occurred_at 倒序，前 8 条进弹层）
         for e in events:
             a = agg.setdefault(e.enterprise_id, {"count": 0, "sev": "none", "cats": set()})
             a["count"] += 1
@@ -261,15 +264,29 @@ class MainWindow(QMainWindow):
                 a["sev"] = e.severity
             if e.category:
                 a["cats"].add(e.category)
+            latest.setdefault(e.enterprise_id, []).append(e)
         spots = []
         for ent in ents:
             a = agg.get(ent.id, {"count": 0, "sev": "none", "cats": set()})
+            center = geo.city_center(ent.province, ent.city)
             spots.append({
                 "name": ent.name,
                 "province": ent.province,
+                "city": ent.city,
+                "lng": center[0] if center else None,
+                "lat": center[1] if center else None,
                 "event_count": a["count"],
                 "severity": a["sev"],
                 "categories": sorted(a["cats"]),
+                "events": [{
+                    "title": ev.title,
+                    "summary": (ev.summary or "")[:160],
+                    "source": ev.source,
+                    "occurred_at": ev.occurred_at,
+                    "severity": ev.severity,
+                    "category": ev.category,
+                    "ai_verdict": (ev.ai_verdict or "")[:120],
+                } for ev in latest.get(ent.id, [])[:8]],
             })
         self.map_view.set_data(spots)
 
