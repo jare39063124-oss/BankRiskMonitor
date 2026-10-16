@@ -282,7 +282,7 @@ class MigrationScriptTest(DbBase):
         finally:
             conn.close()
         self.assertEqual(self._polluted_now(), 0)
-        self.assertEqual(len(applied), 3)
+        self.assertEqual(len(applied), len(mig.LOAN_DATES))
         # 三家放款日写入正确
         by_name = {e.name: e for e in db.list_enterprises()}
         for name, date in mig.LOAN_DATES.items():
@@ -300,7 +300,7 @@ class MigrationScriptTest(DbBase):
         finally:
             conn.close()
         self.assertEqual(n, 7)
-        self.assertEqual(len(applied), 3)
+        self.assertEqual(len(applied), len(mig.LOAN_DATES))
         self.assertEqual(self._polluted_now(), 7)  # 未改
         self.assertEqual(db.get_enterprise(1).loan_date, "")  # 未写入
 

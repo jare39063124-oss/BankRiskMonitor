@@ -135,6 +135,8 @@ class MainWindow(QMainWindow):
         self._refresh_counter = 0  # 全局刷新计数器（信息域倍率：每 N 轮执行一次）
         self._vis = {k: True for k in VISIBILITY_KEYS}
         self._cat_freq = {}
+        self._coverage_problems = []   # 必备信息域缺源清单（扫描前预检）
+        self._coverage_warned = False  # 弹窗只提示一次，避免反复打扰
         # v2 增量：企业/裁决缓存（读层派生，不落库）
         self._ents = []
         self._ents_by_id = {}
@@ -436,6 +438,17 @@ class MainWindow(QMainWindow):
             self.source_label.setText(f"数据源：{enabled}/{total} 启用")
             self.source_label.setToolTip("数据源明细不可用")
 
+        # 必备信息域缺源标记（常驻，直到补齐数据源）
+        if getattr(self, "_coverage_problems", None):
+            try:
+                from ..core.coverage import coverage_message
+                self.source_label.setText(self.source_label.text() + "  ⚠必备信息域缺源")
+                self.source_label.setStyleSheet("color:#FFA033;")
+                self.source_label.setToolTip(
+                    (self.source_label.toolTip() or "") + "\n\n" + coverage_message(self._coverage_problems))
+            except Exception:  # noqa: BLE001
+                pass
+
         if sync is None:
             self.ai_label.setText("模式：同步模块未就绪")
         elif _agents_mod is not None and _read_env().get("OPENROUTER_API_KEY"):
@@ -527,6 +540,32 @@ class MainWindow(QMainWindow):
         return due
 
     # ================= 刷新 =================
+    def _warn_missing_coverage(self):
+        """扫描启动前的必备信息域覆盖度预检（涉诉/被执行等不得静默缺失）。
+
+        返回需提示的问题清单（可能为空）。任何异常都不阻塞扫描。
+        """
+        try:
+            from ..core import coverage as cov_mod
+            problems = cov_mod.check_required_coverage(settings.config())
+        except Exception:  # noqa: BLE001 - 预检失败不阻塞扫描
+            log.warning("必备信息域覆盖度预检失败", exc_info=True)
+            return []
+        self._coverage_problems = problems
+        self._update_status_bar()
+        if not problems:
+            return []
+        labels = "、".join(p["label"] for p in problems)
+        self.statusBar().showMessage(f"⚠ 必备信息域缺少可用数据源：{labels}", 8000)
+        if not self._coverage_warned:
+            self._coverage_warned = True
+            try:
+                from ..core.coverage import coverage_message
+                QMessageBox.warning(self, "必备信息域缺少数据源", coverage_message(problems))
+            except Exception:  # noqa: BLE001 - 弹窗失败不影响扫描继续
+                log.warning("必备信息域提示弹窗失败", exc_info=True)
+        return problems
+
     def _manual_refresh(self):
         if sync is None:
             QMessageBox.information(self, "提示", "同步模块未就绪，请稍后再试。")
@@ -538,6 +577,7 @@ class MainWindow(QMainWindow):
         if not ents:
             QMessageBox.information(self, "提示", "暂无监控企业，请先添加。")
             return
+        self._warn_missing_coverage()  # 必备信息域预检：缺源时明确提示
         cats = self.due_categories()
         self._refresh_counter += 1
         if not cats:

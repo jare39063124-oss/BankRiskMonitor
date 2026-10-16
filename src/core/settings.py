@@ -31,6 +31,16 @@ penetration:
   up_levels: 2      # 向上股东穿透层数（1-2）
   down_levels: 2    # 向下对外投资穿透层数（1-2）
 
+# 贷后必备信息域：扫描启动时若某域没有「可靠」数据源（只有反爬站点这类尽力而为源，
+# 或一个都没启用），界面会明确提示缺什么、怎么补，绝不静默。
+required_coverage:
+  - category: lawsuit
+    label: 涉诉
+    hint: "裁判文书网反爬严格、页面采集不稳定。建议用工商连接器（企查查/天眼查/启信慧眼/水滴信用）代查后，按 docs/CONNECTOR-DATA-REQUEST.md 生成标准格式文件并导入。"
+  - category: enforcement
+    label: 被执行/失信
+    hint: "执行信息公开网有验证码。建议同上：连接器代查 → 标准格式文件 → 导入。"
+
 # 数据源声明式登记：category -> 有序 Provider 链（排在前面的优先）
 # enabled: true/false 控制启停；params 中的 key 留空表示该源未启用（自动跳过）
 # 本轮策略：只用免费/官方公开源；付费/需 Key 源一律 enabled:false 仅留配置位。
