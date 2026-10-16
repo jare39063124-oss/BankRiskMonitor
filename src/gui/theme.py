@@ -42,6 +42,25 @@ CATEGORY_COLORS = {
 BG_ALERT_HIGH = "#2A1215"
 BG_ALERT_MEDIUM = "#2A1D0E"
 
+# ---------- v2 增量 R4：事件流两态 / 企业风险色标 ----------
+# 事件流两态配色（ARCH §8.3，复用既有 tokens，不新造颜色）
+ROW_BASELINE_FG = TEXT_SECOND     # 放款前·基线：灰显降饱和
+ROW_CHANGE_FG = TEXT_MAIN         # 放款后·变更：正常高亮
+ROW_UNDETERMINED_FG = TEXT_MAIN   # 无法判定：正常呈现
+
+# 企业清单风险色标（高=红 / 中=橙 / 低=黄 / 无=绿）
+RISK_COLORS = {
+    "high": SEVERITY_RED,
+    "medium": SEVERITY_ORANGE,
+    "low": SEVERITY_YELLOW,
+    "none": SEVERITY_GREEN,
+}
+RISK_DOTS = {"high": "●", "medium": "●", "low": "●", "none": "○"}
+RISK_LABELS = {"high": "高", "medium": "中", "low": "低", "none": "无"}
+
+# 选中左色条（企业清单选中态）
+SELECT_BAR_WIDTH = 3
+
 FONT_FAMILY = "微软雅黑"
 FONT_SIZE = 12              # 全局字号约 9pt
 RADIUS = 4                  # 卡片圆角
@@ -448,5 +467,42 @@ QLabel[h2="true"] {{
     font-size: 14px;
     font-weight: bold;
     color: {PRIMARY};
+}}
+
+/* ---------- v2 增量 R4：选中态左色条 / 风险徽标 / 事件流两态 / 详情弹窗 ---------- */
+/* 企业清单选中态：底色 + 左侧主题色竖条（ARCH §8.3） */
+QListWidget::item:selected {{
+    background: {PRIMARY_BG};
+    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY};
+    color: {PRIMARY};
+}}
+QListWidget::item:selected:!active {{
+    background: {PRIMARY_BG};
+    color: {PRIMARY};
+}}
+
+/* 风险色标 / 事件数徽标（QLabel 按 badge 属性着色） */
+QLabel[badge="high"] {{ color: {SEVERITY_RED}; font-weight: bold; }}
+QLabel[badge="medium"] {{ color: {SEVERITY_ORANGE}; font-weight: bold; }}
+QLabel[badge="low"] {{ color: {SEVERITY_YELLOW}; font-weight: bold; }}
+QLabel[badge="none"] {{ color: {SEVERITY_GREEN}; }}
+
+/* 事件流放款时点标签 */
+QLabel[phase="change"] {{ color: {PRIMARY}; font-weight: bold; }}
+QLabel[phase="baseline"] {{ color: {TEXT_SECOND}; }}
+QLabel[phase="undetermined"] {{ color: {SEVERITY_YELLOW}; }}
+
+/* 报告主按钮（工具栏前置入口）已由 QPushButton[primary] 覆盖 */
+
+/* 详情弹窗：只读正文/摘要区 */
+QDialog QTextEdit[readonly="true"] {{
+    background: {BG_INPUT};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS}px;
+    color: {TEXT_MAIN};
+}}
+QScrollArea {{
+    background: transparent;
+    border: none;
 }}
 """

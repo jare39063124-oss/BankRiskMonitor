@@ -9,6 +9,7 @@
 - 状态栏：生效模型/数据源、AI 在线或“自动化脚本降级”、下次刷新倒计时与免责声明。
 """
 import json
+import logging
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QToolBar,
     QVBoxLayout,
@@ -30,6 +32,7 @@ try:
 except Exception:
     _agents_mod = None
 from ..core import db, settings
+from ..core.baseline_compare import BUCKET_CHANGE, build_baseline, classify
 from ..core.models import CATEGORIES, CATEGORY_LABELS
 from . import theme
 from .dialogs import (
@@ -40,6 +43,7 @@ from .dialogs import (
     SettingsDialog,
     _read_env,
 )
+from .event_detail import BaselineHistoryDialog, EventDetailDialog
 from .map_view import MapView
 from .panels import AISummaryPanel, AlertPanel, EnterpriseListPanel, EventFeedPanel
 from .report_page import ReportDialog
@@ -49,6 +53,8 @@ try:
     from ..core import sync
 except Exception:
     sync = None
+
+log = logging.getLogger(__name__)
 
 SEV_RANK = {"high": 3, "medium": 2, "low": 1}
 SEV_LABELS = {"high": "高危", "medium": "中危", "low": "关注"}
@@ -129,6 +135,12 @@ class MainWindow(QMainWindow):
         self._refresh_counter = 0  # 全局刷新计数器（信息域倍率：每 N 轮执行一次）
         self._vis = {k: True for k in VISIBILITY_KEYS}
         self._cat_freq = {}
+        # v2 增量：企业/裁决缓存（读层派生，不落库）
+        self._ents = []
+        self._ents_by_id = {}
+        self._baseline_cache = {}
+        self._verdicts = {}
+        self._change_events = []
 
         self._build_ui()
         self._setup_timer()
@@ -143,10 +155,11 @@ class MainWindow(QMainWindow):
 
         # 左：企业清单
         self.ent_panel = EnterpriseListPanel(self)
-        self.ent_panel.setMaximumWidth(340)
+        self.ent_panel.setMaximumWidth(360)
         self.ent_panel.edit_requested.connect(self._edit_enterprise)
         self.ent_panel.penetrate_requested.connect(self._penetrate)
         self.ent_panel.stop_requested.connect(self._stop_monitor)
+        self.ent_panel.baseline_requested.connect(self._show_baseline)
         self.ent_panel.enterprise_selected.connect(self._on_ent_selected)
 
         # 中：地图
@@ -156,9 +169,10 @@ class MainWindow(QMainWindow):
         # 右：事件流 + 预警
         self.feed_panel = EventFeedPanel(self)
         self.feed_panel.event_filters_changed.connect(self._on_filters_changed)
+        self.feed_panel.event_double_clicked.connect(self._open_event_detail)
         self.alert_panel = AlertPanel(self)
-        self.alert_panel.spot_filter_requested.connect(
-            self.feed_panel.set_enterprise_filter)
+        self.alert_panel.spot_filter_requested.connect(self._on_spot_clicked)
+        self.alert_panel.alert_double_clicked.connect(self._open_event_detail)
 
         right_split = QSplitter(Qt.Orientation.Vertical)
         right_split.addWidget(self.feed_panel)
@@ -215,31 +229,105 @@ class MainWindow(QMainWindow):
         bar.setMovable(False)
         self.addToolBar(bar)
 
-        defs = [
+        # 监控组
+        monitor_actions = [
             ("添加企业", self._add_enterprise),
             ("批量导入", self._import),
             ("刷新监控", self._manual_refresh),
-            ("股权穿透", self._penetrate_selected),
-            ("上传授信材料", self._upload_material),
-            ("AI 影响研判", self._ai_impact),
-            ("生成报告", self._gen_report),
-            ("设置", self._open_settings),
         ]
-        for text, slot in defs:
+        for text, slot in monitor_actions:
             act = QAction(text, self)
             act.triggered.connect(slot)
             bar.addAction(act)
-        self._refresh_action = bar.actions()[2]
+            if text == "刷新监控":
+                self._refresh_action = act
+
+        bar.addSeparator()
+        # 分析组
+        analysis_actions = [
+            ("股权穿透", self._penetrate_selected),
+            ("上传授信材料", self._upload_material),
+            ("AI 影响研判", self._ai_impact),
+        ]
+        for text, slot in analysis_actions:
+            act = QAction(text, self)
+            act.triggered.connect(slot)
+            bar.addAction(act)
+
+        # 报告入口前置为主按钮（靠右常驻）
+        spacer = QWidget(self)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar.addWidget(spacer)
+        self.report_btn = QPushButton("生成报告", self)
+        self.report_btn.setProperty("primary", True)
+        self.report_btn.clicked.connect(self._gen_report)
+        bar.addWidget(self.report_btn)
+
+        settings_act = QAction("设置", self)
+        settings_act.triggered.connect(self._open_settings)
+        bar.addAction(settings_act)
 
     # ================= 数据加载 =================
     def reload_data(self):
         """全量刷新：企业清单 / 事件流 / 预警 / 地图 / 摘要 / 状态栏。"""
         ents = db.list_enterprises(include_stopped=False)
+        self._ents = ents
         self._ent_names = {e.id: e.name for e in ents}
-        self.ent_panel.load_data(ents)
+        self._ents_by_id = {e.id: e for e in ents}
+        self._baseline_cache = {}
+        # 风险徽标：基于全部监控事件（不受当前类型/来源下拉筛选影响）
+        all_events = db.list_events(monitored_only=True, limit=500)
+        risk_map, counts = self._risk_stats(all_events)
+        self.ent_panel.load_data(ents, risk_map, counts)
         self._reload_events()
         self._reload_map(ents)
         self._update_status_bar()
+
+    # ---------- v2 增量：读层派生判定（不落库，ARCH §1.3） ----------
+    def _classify_event(self, event):
+        """对单条事件做三态判定（缓存基线快照，纯读层派生）。"""
+        ent = self._ents_by_id.get(event.enterprise_id)
+        if ent is None:
+            ent = db.get_enterprise(event.enterprise_id)
+        baseline = None
+        if ent is not None:
+            key = (ent.id, getattr(ent, "loan_date", ""))
+            if key not in self._baseline_cache:
+                try:
+                    self._baseline_cache[key] = build_baseline(ent)
+                except Exception as exc:  # noqa: BLE001 - 判定失败降级为无法判定
+                    log.warning("build_baseline 失败（ent=%s）：%s", getattr(ent, "id", None), exc)
+                    self._baseline_cache[key] = None
+            baseline = self._baseline_cache[key]
+        try:
+            return classify(event, ent, baseline)
+        except Exception as exc:  # noqa: BLE001 - 脏数据不抛异常
+            log.warning("classify 失败（event=%s）：%s", getattr(event, "id", None), exc)
+            return None
+
+    def _classify_many(self, events):
+        """批量判定，返回 {event_id: Verdict} 与 change 事件列表。"""
+        verdicts = {}
+        change_events = []
+        for e in events:
+            v = self._classify_event(e)
+            verdicts[e.id] = v
+            if v is not None and v.bucket == BUCKET_CHANGE:
+                change_events.append(e)
+        return verdicts, change_events
+
+    def _risk_stats(self, events):
+        """按企业聚合「放款后·变更」事件：返回 (risk_map={id:最高等级}, counts={id:条数})。"""
+        risk_map, counts = {}, {}
+        for e in events:
+            v = self._classify_event(e)
+            if v is None or v.bucket != BUCKET_CHANGE:
+                continue
+            counts[e.enterprise_id] = counts.get(e.enterprise_id, 0) + 1
+            cur = risk_map.get(e.enterprise_id, "none")
+            if SEV_RANK.get(e.severity, 0) > SEV_RANK.get(cur, 0):
+                risk_map[e.enterprise_id] = e.severity
+        return risk_map, counts
 
     def _reload_events(self):
         category = self.feed_panel.cat_combo.currentData() or ""
@@ -247,10 +335,19 @@ class MainWindow(QMainWindow):
         events = db.list_events(
             category=category or None, source=source or None,
             monitored_only=True, limit=500)
-        self.feed_panel.set_events(events, self._ent_names)
-        self.alert_panel.set_alerts(
-            [e for e in events if e.severity in ("high", "medium")], self._ent_names)
+        verdicts, change_events = self._classify_many(events)
+        self._verdicts = verdicts
+        self._change_events = change_events
+        self.feed_panel.set_events(events, self._ent_names, verdicts)
+        self._sync_alerts()
         self._update_summary(events)
+
+    def _sync_alerts(self):
+        """预警仅显示"放款后·变更"，并同步当前企业筛选（含穿透关联主体）。"""
+        allowed = self.feed_panel.allowed_enterprise_ids()
+        alerts = self._change_events if allowed is None else [
+            e for e in self._change_events if e.enterprise_id in allowed]
+        self.alert_panel.set_alerts(alerts, self._ent_names, self._verdicts)
 
     def _reload_map(self, ents):
         """地图聚合：光点按企业注册城市定位（geo 回退省中心），附带最新事件供弹层。"""
@@ -306,11 +403,13 @@ class MainWindow(QMainWindow):
             by_cat[e.category] = by_cat.get(e.category, 0) + 1
         cat_txt = "；".join(
             f"{CATEGORY_LABELS.get(c, c)} {n} 条" for c, n in sorted(by_cat.items())) or "暂无"
+        change_n = len(getattr(self, "_change_events", []))
         text = (
             f"当前监控主体 {len(self._ent_names)} 家，近 500 条事件："
             f"高危 {by_sev.get('high', 0)}、中危 {by_sev.get('medium', 0)}、"
-            f"关注 {by_sev.get('low', 0)}。\n事件构成：{cat_txt}。\n"
-            "提示：选中企业后可通过“上传授信材料→AI 影响研判”生成授信影响分析。")
+            f"关注 {by_sev.get('low', 0)}；其中放款后·变更（视为问题）{change_n} 条。\n"
+            f"事件构成：{cat_txt}。\n"
+            "提示：放款前信息仅记录不视为问题；选中企业后可通过“上传授信材料→AI 影响研判”生成授信影响分析。")
         self.ai_panel.set_text(text)
 
     # ================= 状态栏 =================
@@ -322,7 +421,20 @@ class MainWindow(QMainWindow):
         sources = settings.config().get("sources", {})
         total = sum(len(v) for v in sources.values())
         enabled = sum(1 for v in sources.values() for s in v if s.get("enabled"))
-        self.source_label.setText(f"数据源：{enabled}/{total} 启用")
+        try:
+            from ..providers import base as prov_base
+            self.source_label.setText(prov_base.summarize_sources())
+            lines = []
+            for cat, specs in sources.items():
+                for spec in specs or []:
+                    lines.append(
+                        f"{spec.get('name', '?')}（{CATEGORY_LABELS.get(cat, cat)}）："
+                        f"{prov_base.availability_text(spec)}")
+            self.source_label.setToolTip(
+                f"数据源：{enabled}/{total} 启用\n" + "\n".join(lines))
+        except Exception:  # noqa: BLE001 - 状态栏兜底，绝不阻塞界面
+            self.source_label.setText(f"数据源：{enabled}/{total} 启用")
+            self.source_label.setToolTip("数据源明细不可用")
 
         if sync is None:
             self.ai_label.setText("模式：同步模块未就绪")
@@ -462,13 +574,54 @@ class MainWindow(QMainWindow):
     # ================= 联动 =================
     def _on_spot_clicked(self, name: str):
         self.feed_panel.set_enterprise_filter(name)
+        self._reload_events()
         self.statusBar().showMessage(f"已筛选企业事件：{name}", 5000)
 
     def _on_filters_changed(self, category, source):
         self._reload_events()
 
     def _on_ent_selected(self, name: str):
+        """点击左侧企业 → 右侧事件流/预警即时筛选该企业（含股权穿透关联主体）。"""
+        ent = self.ent_panel.current()
+        related_ids = set()
+        if ent is not None and ent.id:
+            related_ids = {e.id for e in self._ents if e.parent_id == ent.id}
+        # 先载入数据（填充事件流的企业名映射），再应用企业筛选并同步预警
         self._reload_events()
+        self.feed_panel.set_enterprise_filter(name, related_ids or None)
+        self._sync_alerts()
+        self.statusBar().showMessage(
+            f"已筛选：{name}（含关联主体 {len(related_ids)} 家）", 5000)
+
+    # ---------- v2 增量：详情弹窗 / 基线历史 ----------
+    def _open_event_detail(self, event):
+        """事件流/预警双击 → 同一 EventDetailDialog（R3）。"""
+        ent = self._ents_by_id.get(event.enterprise_id)
+        name = ent.name if ent is not None else self._ent_names.get(event.enterprise_id, "")
+        verdict = self._verdicts.get(event.id)
+        if verdict is None:
+            verdict = self._classify_event(event)
+        dlg = EventDetailDialog(event, name, verdict, self)
+        dlg.filter_enterprise_requested.connect(self._filter_by_enterprise_name)
+        dlg.exec()
+
+    def _filter_by_enterprise_name(self, name: str):
+        """详情弹窗「筛选该企业事件」→ 复用 R4 联动。"""
+        self.ent_panel.select_by_name(name)
+        self._on_ent_selected(name)
+
+    def _show_baseline(self, ent_id: int):
+        """查看某企业放款前基线快照与基线/历史事件（R4）。"""
+        ent = db.get_enterprise(ent_id)
+        if ent is None:
+            return
+        baseline = None
+        try:
+            baseline = db.get_baseline(ent_id) or build_baseline(ent)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("读取基线失败（ent=%s）：%s", ent_id, exc)
+        events = db.list_events(enterprise_id=ent_id, limit=2000)
+        BaselineHistoryDialog(ent, baseline, events, self).exec()
 
     # ================= 工具栏动作 =================
     def _add_enterprise(self):
@@ -574,3 +727,44 @@ class MainWindow(QMainWindow):
             self._next_refresh = None
             self._update_status_bar()
             self.reload_data()
+
+    # ================= R5：干净退出 / 单实例激活 =================
+    def _on_instance_activated(self):
+        """第二实例请求激活已有窗口（SingleInstanceGuard.activated）。"""
+        try:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        except Exception as exc:  # noqa: BLE001 - 抬窗失败不影响主流程
+            log.warning("激活已有窗口失败：%s", exc)
+
+    def closeEvent(self, event):
+        """关闭主窗口：停定时器 + 回收在跑线程，确保进程可及时退出（R5）。"""
+        self._shutdown()
+        event.accept()
+
+    def _shutdown(self):
+        timer = getattr(self, "_tick_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        for attr in ("_worker", "_ai_worker"):
+            self._stop_thread(getattr(self, attr, None))
+
+    @staticmethod
+    def _stop_thread(worker, timeout_ms: int = 3000):
+        """``requestInterruption()`` 后 ``wait(超时)``；仍不退出则 ``terminate()`` 兜底。"""
+        if worker is None:
+            return
+        try:
+            if not worker.isRunning():
+                return
+            worker.requestInterruption()
+            if not worker.wait(timeout_ms):
+                log.warning("后台线程未在 %dms 内退出，强制终止：%s", timeout_ms, worker)
+                worker.terminate()
+                worker.wait(1000)
+        except Exception as exc:  # noqa: BLE001 - 回收失败不阻塞退出
+            log.warning("回收后台线程失败：%s", exc)
