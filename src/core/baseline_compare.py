@@ -28,10 +28,8 @@ from .models import BaselineSnapshot, Enterprise, Event
 
 try:  # 允许以顶层 src.core.db 或相对导入两种方式加载
     from . import db
-    from .models import CATEGORY_LABELS
 except ImportError:  # pragma: no cover - 兼容脚本直跑场景
     from src.core import db  # type: ignore
-    from src.core.models import CATEGORY_LABELS  # type: ignore
 
 log = logging.getLogger(__name__)
 
