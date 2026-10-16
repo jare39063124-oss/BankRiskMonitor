@@ -11,7 +11,7 @@ try:
 except ImportError:
     from src.providers.base import run_with_fallback
 
-CSV_HEADERS = ["企业名称", "统一社会信用代码", "省份", "城市", "授信备注"]
+CSV_HEADERS = ["企业名称", "统一社会信用代码", "省份", "城市", "授信备注", "放款日期"]
 
 
 # ---------- 同步 ----------
@@ -95,7 +95,10 @@ def _read_csv_rows(path: str) -> list:
 
 
 def import_enterprises_from_csv(path: str) -> int:
-    """从 CSV 导入企业名单（列：企业名称/统一社会信用代码/省份/城市/授信备注），返回导入条数。"""
+    """从 CSV 导入企业名单（列：企业名称/统一社会信用代码/省份/城市/授信备注/放款日期），返回导入条数。
+
+    「放款日期」列为可选：缺失或为空时按空串处理（不覆盖既有放款日）。
+    """
     n = 0
     for row in _read_csv_rows(path):
         name = (row.get("企业名称") or "").strip()
@@ -106,7 +109,8 @@ def import_enterprises_from_csv(path: str) -> int:
             credit_code=(row.get("统一社会信用代码") or "").strip(),
             province=(row.get("省份") or "").strip(),
             city=(row.get("城市") or "").strip(),
-            credit_note=(row.get("授信备注") or "").strip())
+            credit_note=(row.get("授信备注") or "").strip(),
+            loan_date=(row.get("放款日期") or "").strip())
         n += 1
     return n
 
@@ -118,7 +122,7 @@ def export_enterprises_to_csv(path: str) -> int:
         w = csv.writer(f)
         w.writerow(CSV_HEADERS)
         for e in ents:
-            w.writerow([e.name, e.credit_code, e.province, e.city, e.credit_note])
+            w.writerow([e.name, e.credit_code, e.province, e.city, e.credit_note, e.loan_date])
     return len(ents)
 
 
@@ -147,7 +151,7 @@ def import_enterprises_from_xlsx(path: str) -> int:
                 continue
             db.upsert_enterprise(name, credit_code=col("统一社会信用代码"),
                                  province=col("省份"), city=col("城市"),
-                                 credit_note=col("授信备注"))
+                                 credit_note=col("授信备注"), loan_date=col("放款日期"))
             n += 1
         return n
     finally:
@@ -163,6 +167,6 @@ def export_enterprises_to_xlsx(path: str) -> int:
     ws.title = "企业名单"
     ws.append(CSV_HEADERS)
     for e in ents:
-        ws.append([e.name, e.credit_code, e.province, e.city, e.credit_note])
+        ws.append([e.name, e.credit_code, e.province, e.city, e.credit_note, e.loan_date])
     wb.save(path)
     return len(ents)

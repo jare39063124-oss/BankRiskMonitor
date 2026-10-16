@@ -1,0 +1,112 @@
+%% BankRiskMonitor v2 增量 — 时序图（R1/R4/R5 + 连接器代查 四条主流程）
+%% 完整说明见 docs/ARCH-v2-increment.md §5。
+
+%% ================= (a) 刷新采集 → 写入 → 基线对比（读层派生）→ 渲染/计数 =================
+sequenceDiagram
+    participant U as 用户
+    participant W as MainWindow
+    participant RW as RefreshWorker(QThread)
+    participant SY as core.sync
+    participant P as run_with_fallback
+    participant DB as core.db
+    participant BC as baseline_compare
+    participant PN as Panels
+
+    U->>W: 点击「刷新监控」
+    W->>RW: start()  (_manual_refresh)
+    RW->>SY: run_sync(ent)  逐 category
+    SY->>P: run_with_fallback(cat, ent)
+    P-->>SY: events, source  (单源失败自动降级，绝不冒泡)
+    SY->>DB: insert_event()  唯一键去重（不写判定）
+    RW-->>W: done({ok, fail})
+    W->>W: reload_data() -> _reload_events()
+    W->>DB: list_events(monitored_only, limit=500)
+    DB-->>W: events[]
+    loop 每个企业（缓存基线）
+        W->>BC: build_baseline(ent)
+        BC-->>W: BaselineSnapshot | None
+    end
+    loop 每条事件
+        W->>BC: classify(event, ent, baseline)   纯函数，读层派生，不落库
+        BC-->>W: Verdict(bucket, reason, diff_items)
+    end
+    W->>PN: set_events(events, ent_names, verdicts)
+    W->>PN: set_alerts([e for change], ...)      预警仅 change
+    PN-->>U: 两态渲染（基线灰显 / 变更高亮）+ 徽标/色标
+
+%% ================= (b) 点击左侧企业 → 联动右侧筛选（含穿透关联主体） =================
+sequenceDiagram
+    participant U as 用户
+    participant LP as EnterpriseListPanel
+    participant W as MainWindow
+    participant DB as core.db
+    participant FP as EventFeedPanel
+    participant AP as AlertPanel
+    participant ED as EventDetailDialog
+
+    U->>LP: 单击企业行（选中态：底色 + 左色条 #00FF9C）
+    LP->>LP: current() -> Enterprise
+    LP-->>W: enterprise_selected(name)
+    W->>DB: list_enterprises(include_stopped=False)
+    DB-->>W: ents[]
+    W->>W: related_ids = {e.id for e in ents if e.parent_id == base.id}
+    W->>FP: set_enterprise_filter(base.name, related_ids)
+    FP->>FP: 仅保留 base + related 事件（标签区分 主/关联）
+    FP->>FP: 顶部标签「企业筛选：XXX [×]」+ 一键清除
+    W->>AP: set_alerts([仅 change 且属 base+related])
+    FP-->>U: 即时仅显示该企业（+关联）事件；预警同步过滤
+    U->>FP: 双击某行
+    FP-->>W: event_double_clicked(event)
+    W->>ED: EventDetailDialog(event, name, phase, compare_result).exec()
+
+%% ================= (c) 关闭窗口 → 线程/定时器回收 + 第二实例被激活退出 =================
+sequenceDiagram
+    participant U as 用户
+    participant W as MainWindow
+    participant DB as core.db
+    participant SI as SingleInstanceGuard(主)
+    participant M2 as 第二实例 main.py
+    participant S2 as SingleInstanceGuard(从)
+
+    Note over W: 关闭主窗口
+    U->>W: closeEvent(event)
+    W->>W: _tick_timer.stop()
+    W->>W: worker.requestInterruption()
+    W->>W: worker.wait(3000)
+    alt 3s 内未退出
+        W->>W: worker.terminate(); worker.wait()   兜底 + log.warning
+    end
+    W->>DB: 短连接已 with 释放（WAL 落盘）
+    W->>W: event.accept(); app 退出
+
+    Note over M2: 再次双击启动
+    M2->>S2: SingleInstanceGuard().is_primary()  -> False（连上已有 named pipe）
+    S2->>SI: write(b"SHOW")
+    SI-->>W: activated 信号 -> showNormal/raise_/activateWindow
+    M2->>M2: sys.exit(0)   第二实例不新建窗口
+
+%% ================= (d) 连接器代查 → 归一入库 → 作为放款前基线（v1.2） =================
+sequenceDiagram
+    participant AG as 主 Agent
+    participant CONN as MCP 连接器
+    participant J as 批次 JSON 文件
+    participant CI as tools/connector_ingest.py
+    participant DB as core.db
+    participant BC as baseline_compare
+
+    AG->>CONN: 代查企业工商档案（tyc_mcp→qcc→qixinhuiyan→shuidi）
+    alt 连接器未授权/失败/空
+        CONN-->>AG: 错误/空
+        AG->>AG: 跳过该连接器，记 reason=unauthorized/empty（不阻塞）
+    else 成功
+        CONN-->>AG: 档案（profile + changes[含 changeDate] + 涉诉/被执行）
+    end
+    AG->>J: 落盘批次 JSON（schema §1.6.3.1，source=连接器名）
+    CI->>J: load(path)
+    CI->>CI: _occurred_at(change_date, generated_at)   无变更日/等于抓取日 -> 留空
+    CI->>DB: upsert_enterprise(匹配 credit_code/name)
+    CI->>DB: insert_event(幂等，唯一键 (ent,category,title,source))
+    CI-->>AG: {inserted, skipped, reasons}   第二次运行 inserted=0
+    Note over BC: 刷新时（见 (a)）
+    BC->>DB: build_baseline(ent)   优先① 取档案变更记录(change_date<loan_date)
+    BC-->>BC: dim_sources 记连接器名；混合来源 -> source='mixed'

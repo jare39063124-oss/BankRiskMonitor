@@ -1,0 +1,74 @@
+%% BankRiskMonitor v2 — 时序图
+%% 本文件含两条流程：(1) 启动→加载地图→下钻交互；(2) 选企业→生成贷后报告→(补录)→落盘→打开
+%% 完整说明见 docs/ARCH-v2.md §4。
+
+%% ================= (1) 启动 → 加载地图 → 下钻交互 =================
+sequenceDiagram
+    participant U as 用户
+    participant M as main.py
+    participant S as core.settings
+    participant DB as core.db
+    participant W as MainWindow
+    participant V as MapView(纯Qt)
+    participant L as GeoDataLoader
+    participant P as Projection
+
+    M->>S: ensure_boot_files()  补齐 config/model_policy/.env
+    M->>DB: init_db()  (CREATE IF NOT EXISTS, 含补录/日志表)
+    M->>W: MainWindow()
+    W->>W: _build_ui()  工具栏分组/右栏Tab/左栏搜索/底栏折叠
+    W->>V: 构造 MapView()
+    V->>L: load_national()  china.json
+    L->>L: _parse → RegionFeature(QPainterPath/bbox/center)
+    V->>P: fit(bbox, canvas, padding)  视图矩阵
+    V->>V: repaint  荧光绿辉光边界
+    W->>W: reload_data() → _reload_map() 组装 spots
+    W->>V: set_data(spots, mode)
+    V->>V: 叠加光点(QRadialGradient + 涟漪 QTimer)
+    U->>V: 点击某省 (mousePressEvent)
+    V->>P: px_to_world() 逆变换 → hit_test(RegionFeature)
+    V->>L: children('province', adcode)  读 provinces/{adcode}_full.json(缓存)
+    L-->>V: 市级 RegionFeature[]
+    V->>P: fit(省 bbox) 重建视图矩阵
+    V-->>U: 重绘省图 + 面包屑"全国 › 浙江" + 返回按钮
+    Note over V: 黑吉辽/直辖市：市→区县 读 districts/{adcode}_full.json；无文件则 has_children=False 不下钻
+    U->>V: 点击"返回" → go_back() 逐级回退
+    U->>V: 点击光点 → spot_clicked(name) → MainWindow 过滤事件流
+
+%% ================= (2) 选企业 → 生成贷后报告 →(补录)→ 落盘 → 打开 =================
+sequenceDiagram
+    participant U as 用户(客户经理)
+    participant RC as ReportCenterDialog
+    participant DB as core.db
+    participant ENG as ReportEngine
+    participant CTX as ReportContext
+    participant SB as SectionBuilder(×8)
+    participant DW as DocxWriter
+
+    U->>RC: 选企业 + 类型=贷后检查报告 + 期间
+    RC->>DB: list_* (financial/credit/guarantee/events/materials)
+    RC->>RC: 缺省预检 → 展示"将缺省：③财务 ④行业 ⑤授信 ⑥担保"
+    alt 用户点"补录关键字段"
+        RC->>U: FinancialEntryDialog / CreditEntryDialog / GuaranteeEntryDialog
+        U->>DB: upsert_financial_data / credit_line / guarantee
+    end
+    U->>RC: 点击"生成 docx"
+    RC->>RC: 按钮置灰 + "正在生成 docx…"
+    RC->>ENG: generate(ctx, save_path)  (后台 FnWorker)
+    ENG->>CTX: from_db(ent_id, period, options) 数据快照(冻结刷新影响)
+    loop 每个章节 builder
+        ENG->>SB: build(ctx)
+        alt 章节异常
+            SB-->>ENG: raise
+            ENG->>ENG: log.exception + builder.placeholder(reason)
+            ENG-->>SB: 占位章节("本节数据获取异常,已跳过并记录日志")
+        else 正常
+            SB-->>ENG: SectionResult(blocks, missing_fields)
+        end
+        ENG->>DW: render(result)  缺省单元格 灰色+斜体
+    end
+    ENG->>DW: add_missing_note(汇总缺省字段→应来源)
+    ENG->>DW: save(save_path)  失败 → 重试1次 → 兜底模板
+    ENG->>DB: add_report_log(...) + 写 data/logs/report_<ts>_<ent>.log
+    ENG-->>RC: ReportResult(ok, degraded, missing_count, path)
+    RC-->>U: 成功弹路径 / 降级与缺省清单；可"打开文件"

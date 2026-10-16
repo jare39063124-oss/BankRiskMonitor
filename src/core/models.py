@@ -21,6 +21,7 @@ class Enterprise:
     relation: str = ""          # 如 "股东(60%)" / "对外投资(100%)"
     pen_level: int = 0          # 穿透层级 0=主企业 1-2=穿透层
     direction: str = ""         # up/down
+    loan_date: str = ""         # 放款日 YYYY-MM-DD，空=未设（v2 新增）
     created_at: str = ""
 
 @dataclass
@@ -57,3 +58,34 @@ class QueueTask:
     payload: str = ""           # JSON
     status: str = "pending"     # pending / done / failed
     created_at: str = ""
+
+
+@dataclass
+class BaselineSnapshot:
+    """放款前基线快照（v2 增量）：一企业一行，结构化 11 维 + 来源/降级链。
+
+    字段与 ``baseline_snapshot`` 表 DDL 一一对应（见 ``db.SCHEMA`` / ARCH §3.2）。
+    属性维（``legal_person``/``reg_capital``/``shareholders``/``business_scope``/
+    ``business_status``）取字符串；新增维（``abnormal_flag``/``penalty_count``/
+    ``lawsuit_count``）取 ``Optional[int]``，``None`` 表示该维基线缺失。
+    """
+
+    id: Optional[int] = None
+    enterprise_id: int = 0
+    loan_date: str = ""
+    legal_person: str = ""            # 法定代表人
+    reg_capital: str = ""             # 注册资本（原文，含单位）
+    shareholders: str = ""            # 股东与股权结构（JSON 数组或分隔串）
+    business_scope: str = ""          # 经营范围摘要/指纹
+    business_status: str = ""         # 经营状态（存续/在业/注销/吊销…）
+    abnormal_flag: Optional[int] = None   # 1=基线时点已列入经营异常；None=该维缺失
+    penalty_count: Optional[int] = None   # 行政处罚基线条数
+    lawsuit_count: Optional[int] = None   # 涉诉基线条数
+    enforcement_status: str = ""      # 被执行/失信基线状态
+    tax_status: str = ""              # 税务状态
+    risk_tags: str = ""               # 风险标签集合（JSON 数组）
+    source: str = ""                  # auto|manual|history|mixed
+    dim_sources: str = "{}"           # JSON：{dim_key: 来源} 优先级降级链
+    note: str = ""
+    built_at: str = ""
+    updated_at: str = ""

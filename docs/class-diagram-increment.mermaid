@@ -1,0 +1,216 @@
+%% BankRiskMonitor v2 增量 — 类图（R1 基线对比 + R3 详情弹窗 + R5 单实例 + Provider 扩展 + 连接器代查通路）
+%% 完整版见 docs/ARCH-v2-increment.md §3；本文件为可独立渲染的 Mermaid classDiagram。
+classDiagram
+    %% ================= 数据契约 =================
+    class Enterprise {
+        <<existing>>
+        +int id
+        +str name
+        +str credit_code
+        +str province
+        +str city
+        +str credit_note
+        +int monitored
+        +int is_related
+        +int parent_id
+        +str relation
+        +int pen_level
+        +str direction
+        +str loan_date  "★新增 放款日 YYYY-MM-DD,空=未设"
+    }
+
+    class BaselineSnapshot {
+        +int id
+        +int enterprise_id
+        +str loan_date
+        +str legal_person
+        +str reg_capital
+        +str shareholders
+        +str business_scope
+        +str business_status
+        +int abnormal_flag
+        +int penalty_count
+        +int lawsuit_count
+        +str enforcement_status
+        +str tax_status
+        +str risk_tags
+        +str source  "auto|manual|history|mixed"
+        +str dim_sources  "JSON {dim:source}"
+        +str note
+        +str built_at
+        +str updated_at
+    }
+
+    class DiffItem {
+        +str dim
+        +str label
+        +str old
+        +str new
+    }
+
+    class Verdict {
+        +str bucket  "change|baseline|undetermined"
+        +str reason
+        +list~DiffItem~ diff_items
+        +is_problem() bool
+    }
+
+    %% ================= 核心逻辑（唯一真源） =================
+    class BaselineCompare {
+        <<module baseline_compare.py>>
+        +str BUCKET_CHANGE$
+        +str BUCKET_BASELINE$
+        +str BUCKET_UNDETERMINED$
+        +dict PHASE_LABELS$
+        +tuple DIMENSIONS$
+        +set STATE_DIMS$
+        +set NEW_DIMS$
+        +parse_date(s) str
+        +date_ge(a, b) bool
+        +dimension_of(event) str
+        +build_baseline(ent) BaselineSnapshot
+        +classify(event, ent, baseline) Verdict
+    }
+
+    class BaselineStore {
+        +get(ent_id) BaselineSnapshot
+        +save(snapshot) int
+        +list_all() list~BaselineSnapshot~
+    }
+
+    class DbLayer {
+        <<existing src/core/db.py>>
+        +init_db() void
+        +_ensure_column(conn, table, column, ddl) void
+        +get_baseline(ent_id) BaselineSnapshot
+        +upsert_baseline(ent_id, **fields) int
+        +list_baselines() list~BaselineSnapshot~
+    }
+
+    %% ================= Provider 扩展 =================
+    class ProviderBase {
+        <<existing>>
+        +str name
+        +str category
+        +http_get(url, **kw) Response
+        +_json_get(url, **kw) dict
+        +fetch(ent) list~Event~
+    }
+
+    class CreditChinaProvider {
+        +str name="credit_china"
+        +str category="enforcement"
+        +fetch(ent) list~Event~
+    }
+
+    class GsxtProvider {
+        <<existing 启用>>
+        +str name="gsxt"
+        +str category="biz_change"
+        +fetch(ent) list~Event~
+    }
+
+    %% ================= 连接器代查通路（v1.2 确认启用） =================
+    class ConnectorProfile {
+        <<dataclass 冻结 schema ARCH-v2-increment 1.6.3.1>>
+        +str schema_version
+        +str generated_at  "仅溯源,禁止入 occurred_at"
+        +str connector  "tyc_mcp|qcc_company|qixinhuiyan_mcp|shuidi_credit"
+        +list~CompanyProfile~ companies
+    }
+
+    class ConnectorIngest {
+        <<module tools/connector_ingest.py>>
+        +load(path) ConnectorProfile
+        +_norm_date(v) str
+        +_occurred_at(change_date, generated_at) tuple
+        +_match_enterprise(company) int
+        +build_events(company, source) list~Event~
+        +run(path, dry_run) dict
+        +main(argv) int
+    }
+
+    %% ================= GUI =================
+    class EventDetailDialog {
+        <<QDialog>>
+        +Event event
+        +str ent_name
+        +str loan_phase
+        +str compare_result
+        +_open_url() void
+        +_copy_url() void
+        +Signal filter_enterprise_requested(str)
+    }
+
+    class EnterpriseListPanel {
+        <<existing QGroupBox>>
+        +Signal enterprise_selected(str)
+        +Signal edit_requested(int)
+        +Signal penetrate_requested(int)
+        +Signal stop_requested(int)
+        +QLineEdit search_edit
+        +QComboBox sort_combo
+        +QComboBox filter_combo
+        +load_data(enterprises, risk_map) void
+        +_apply_filter() void
+        +_sort_key(ent) tuple
+    }
+
+    class EventFeedPanel {
+        <<existing QGroupBox>>
+        +Signal event_filters_changed(str, str)
+        +Signal event_double_clicked(object)
+        +set_events(events, ent_names, verdicts) void
+        +set_enterprise_filter(name, related_ids) void
+        +_render() void
+    }
+
+    class AlertPanel {
+        <<existing QGroupBox>>
+        +Signal alert_double_clicked(object)
+        +set_alerts(change_events, ent_names) void
+    }
+
+    class SingleInstanceGuard {
+        <<QObject>>
+        +str key
+        +Signal activated()
+        +is_primary() bool
+        +notify_existing() bool
+    }
+
+    class MainWindow {
+        <<existing QMainWindow>>
+        +closeEvent(event) void
+        +_on_instance_activated() void
+        +_reload_events() void
+    }
+
+    %% ================= 关系 =================
+    Enterprise "1" --> "0..1" BaselineSnapshot : 按 loan_date 建立
+    BaselineCompare --> Enterprise : 读 loan_date
+    BaselineCompare --> BaselineSnapshot : 读基线
+    BaselineCompare ..> Verdict : 产出
+    Verdict "1" *-- "0..*" DiffItem : 组成
+    BaselineStore --> BaselineSnapshot : CRUD
+    BaselineCompare --> BaselineStore : build_baseline 取数
+    BaselineStore --> DbLayer : 委托
+
+    ProviderBase <|-- CreditChinaProvider
+    ProviderBase <|-- GsxtProvider
+
+    ConnectorIngest --> ConnectorProfile : 解析
+    ConnectorIngest ..> DbLayer : insert_event(幂等)/upsert_enterprise
+    ConnectorIngest ..> Enterprise : 匹配(credit_code/name)
+    ConnectorIngest ..> Event : 产出(occurred_at=变更日,无则空)
+    ConnectorProfile ..> BaselineSnapshot : 来源①贡献维度(change_date<loan_date)
+
+    MainWindow --> EventDetailDialog : 双击打开
+    MainWindow --> EnterpriseListPanel : 注入 risk_map
+    MainWindow --> EventFeedPanel : set_events(verdicts)
+    MainWindow --> AlertPanel : 仅 change
+    MainWindow --> SingleInstanceGuard : 启动/激活
+    EnterpriseListPanel --> Verdict : 徽标计数(change)
+    EventFeedPanel --> Verdict : 两态渲染
+    AlertPanel --> Verdict : 仅 change
+    EventDetailDialog --> Verdict : 展示放款时点/对比结论

@@ -2,52 +2,18 @@
 
 - EventFeedPanel 类型下拉含“社媒”、来源下拉含 config.yaml 社媒五源；
 - AlertPanel 对 social 事件正常展示（预警按 severity 过滤，社媒自动生效）；
-- MapView 传入含 social 类别的 spots 数据冒烟不报错。
+- MapView 传入含 social 类别的 spots 数据冒烟不报错（v2 纯 Qt 自绘，无 WebEngine）。
 
 运行：python -m unittest tests.test_gui_social -v
 """
-import atexit
 import gc
 import os
 import sys
 import tempfile
-import time
 import unittest
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-# offscreen 下禁用 GPU：规避 Chromium 在 Windows 进程退出清理时的访问违例（不影响断言）
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
-
-# Chromium（QtWebEngine）在解释器关闭阶段析构时仍可能触发 Windows 访问违例
-# （0xC0000005），导致用例全部通过却报非零退出码。此处经 atexit 在测试流程
-# 结束后直接终止进程、跳过 Qt 清理：退出码沿用 unittest 的 sys.exit 结果
-# （True->1 / False->0），未捕获异常按 1 处理。仅影响本测试进程。
-_EXIT_CODE = [0]
-_real_exit, _real_excepthook = sys.exit, sys.excepthook
-
-
-def _capture_exit(code=0):
-    _EXIT_CODE[0] = int(bool(code))
-    _real_exit(code)
-
-
-def _capture_exc(*args):
-    _EXIT_CODE[0] = 1
-    _real_excepthook(*args)
-
-
-sys.exit, sys.excepthook = _capture_exit, _capture_exc
-
-
-@atexit.register
-def _skip_qt_teardown():
-    try:
-        sys.stdout.flush()
-        sys.stderr.flush()
-    except Exception:
-        pass
-    os._exit(_EXIT_CODE[0])
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for p in (ROOT, os.path.join(ROOT, "src")):
@@ -62,7 +28,7 @@ from src.core import db, settings  # noqa: E402
 with open(os.path.join(ROOT, "config.yaml"), "r", encoding="utf-8") as _f:
     settings._config = yaml.safe_load(_f) or {}
 
-# 含 QtWebEngineWidgets 的模块必须先于 QApplication 导入
+# v2 MapView 为纯 Qt 自绘，无 QtWebEngine/QtWebChannel 依赖，导入顺序不再受限
 from src.gui.map_view import MapView  # noqa: E402
 from src.gui.panels import AlertPanel, EventFeedPanel  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -139,18 +105,17 @@ class AlertSocialTest(GuiTestBase):
 
 class MapViewSocialSmokeTest(GuiTestBase):
     def test_set_data_with_social_spot_no_error(self):
-        """MapView 传入含 social 类别的 spots（category 着色模式）冒烟不报错。"""
+        """MapView（纯 Qt）传入含 social 类别的 spots 冒烟不报错，就绪即无待渲染数据。"""
         mv = MapView()
         mv.show()
-        deadline = time.time() + 8
-        while not mv._loaded and time.time() < deadline:
-            QApplication.processEvents()
-        spots = [{"name": "社媒测试公司", "province": "浙江省", "event_count": 2,
+        QApplication.processEvents()
+        spots = [{"name": "社媒测试公司", "province": "浙江省", "city": "杭州市",
+                  "lng": 120.15, "lat": 30.28, "event_count": 2,
                   "severity": "medium", "categories": ["social", "news"]}]
         mv.set_data(spots, "category")
-        for _ in range(60):
+        for _ in range(10):
             QApplication.processEvents()
-        self.assertIsNone(mv._pending)  # 页面就绪后待渲染数据已推送，全程无异常
+        self.assertIsNone(mv._pending)  # 纯 Qt 即时渲染，无异步待推送数据
         mv.deleteLater()
 
 

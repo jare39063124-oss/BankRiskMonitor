@@ -227,8 +227,8 @@ class ImportExportTest(BaseDBTest):
         self.assertEqual(sync_mod.export_enterprises_to_csv(dst), 2)
         with open(dst, "r", encoding="utf-8-sig", newline="") as f:
             rows = list(csv.reader(f))
-        self.assertEqual(rows[0], ["企业名称", "统一社会信用代码", "省份", "城市", "授信备注"])
-        self.assertEqual(rows[1], ["测试一号公司", "91330100MA27AAAA1A", "浙江省", "杭州市", "授信500万"])
+        self.assertEqual(rows[0], ["企业名称", "统一社会信用代码", "省份", "城市", "授信备注", "放款日期"])
+        self.assertEqual(rows[1], ["测试一号公司", "91330100MA27AAAA1A", "浙江省", "杭州市", "授信500万", ""])
         self.assertEqual(rows[2][:2], ["测试二号公司", ""])
 
     def test_csv_gbk_import(self):
@@ -245,8 +245,8 @@ class ImportExportTest(BaseDBTest):
         src = os.path.join(self._tmp.name, "in.xlsx")
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["企业名称", "统一社会信用代码", "省份", "城市", "授信备注"])
-        ws.append(["测试三号公司", "91330100MA27BBBB2B", "浙江省", "温州市", ""])
+        ws.append(["企业名称", "统一社会信用代码", "省份", "城市", "授信备注", "放款日期"])
+        ws.append(["测试三号公司", "91330100MA27BBBB2B", "浙江省", "温州市", "", "2026-01-15"])
         wb.save(src)
         self.assertEqual(sync_mod.import_enterprises_from_xlsx(src), 1)
         dst = os.path.join(self._tmp.name, "out.xlsx")
@@ -256,10 +256,10 @@ class ImportExportTest(BaseDBTest):
             rows = list(wb2.active.iter_rows(values_only=True))
         finally:
             wb2.close()
-        self.assertEqual(rows[0], ("企业名称", "统一社会信用代码", "省份", "城市", "授信备注"))
+        self.assertEqual(rows[0], ("企业名称", "统一社会信用代码", "省份", "城市", "授信备注", "放款日期"))
         # openpyxl 读回时空字符串单元格为 None，统一归一化后比较
         self.assertEqual(tuple("" if v is None else v for v in rows[1]),
-                         ("测试三号公司", "91330100MA27BBBB2B", "浙江省", "温州市", ""))
+                         ("测试三号公司", "91330100MA27BBBB2B", "浙江省", "温州市", "", "2026-01-15"))
 
 
 # ---------- Provider 离线解析 ----------

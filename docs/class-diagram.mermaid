@@ -1,0 +1,214 @@
+%% BankRiskMonitor v2 — 类图（地图子系统 + 报告子系统 + 补录数据模型）
+%% 完整版见 docs/ARCH-v2.md §3；本文件为可独立渲染的 Mermaid classDiagram。
+classDiagram
+    %% ================= 地图子系统 =================
+    class RegionFeature {
+        +str name
+        +int adcode
+        +str level  "province|city|district"
+        +QPainterPath path  "世界坐标"
+        +tuple bbox
+        +tuple center
+        +contains(world_pt) bool
+    }
+
+    class GeoDataLoader {
+        -dict _cache
+        +load_national() list~RegionFeature~
+        +load_province(adcode) list~RegionFeature~
+        +load_district(adcode) list~RegionFeature~
+        +children(level, adcode) list~RegionFeature~
+        +has_children(adcode) bool
+        +_parse(feature) RegionFeature
+    }
+
+    class Projection {
+        +tuple bbox
+        +float k
+        +float s0
+        +float tx0
+        +float ty0
+        +float zoom
+        +float dx
+        +float dy
+        +fit(bbox, size, padding) void
+        +world_to_px(lon, lat) QPointF
+        +px_to_world(x, y) tuple
+        +view_transform() QTransform
+        +zoom_at(px, factor) void
+        +pan(dx, dy) void
+        +reset() void
+        +hit_test(features, px) RegionFeature
+    }
+
+    class MapItem {
+        +RegionFeature feature
+        +bool hovered
+        +bool flash
+        +draw(painter, palette) void
+    }
+
+    class MapScene {
+        +list~MapItem~ items
+        +list~Spot~ spots
+        +str level
+        +int adcode
+        +str mode  "severity|category"
+        +Projection proj
+        +set_features(features) void
+        +set_spots(spots, mode) void
+        +draw(painter, rect) void
+        +on_click(px) object
+    }
+
+    class MapView {
+        +Signal spot_clicked(str)
+        +Signal region_clicked(object)
+        +Signal level_changed(str)
+        +MapScene scene
+        +GeoDataLoader loader
+        +bool _loaded
+        +object _pending
+        +set_data(spots, mode) void
+        +drill(feature) void
+        +go_back() void
+        +reset() void
+        +paintEvent(e) void
+        +mousePressEvent(e) void
+        +mouseMoveEvent(e) void
+        +wheelEvent(e) void
+    }
+
+    MapView --> MapScene : owns
+    MapView --> GeoDataLoader : uses
+    MapScene --> Projection : uses
+    MapScene --> MapItem : contains
+    MapItem --> RegionFeature : wraps
+    GeoDataLoader --> RegionFeature : creates
+    Projection ..> RegionFeature : hit_test
+
+    %% ================= 报告子系统 =================
+    class ReportContext {
+        +Enterprise enterprise
+        +list~Enterprise~ related
+        +list~Event~ events
+        +list~CreditMaterial~ materials
+        +str period_start
+        +str period_end
+        +str author
+        +FinancialData finance_current
+        +FinancialData finance_prior
+        +list~CreditLine~ credit_lines
+        +list~Guarantee~ guarantees
+        +dict options
+        +from_db(ent_id, period, options) ReportContext
+    }
+
+    class SectionResult {
+        +str key
+        +str title
+        +list~Block~ blocks
+        +list~str~ missing_fields
+        +bool degraded
+        +str error
+        +bool ok
+    }
+
+    class SectionBuilder {
+        <<abstract>>
+        +str key
+        +str title
+        +build(ctx) SectionResult
+        +placeholder(ctx, reason) SectionResult
+    }
+
+    class ReportEngine {
+        -list~SectionBuilder~ builders
+        -DocxWriter writer
+        +generate(ctx, save_path) ReportResult
+        +_run_section(builder, ctx) SectionResult
+        +_write_docx(ctx, results, save_path) str
+        +_write_fallback(ctx, save_path) str
+        +_log(ctx, results, path, errors) void
+    }
+
+    class PostLoanReport {
+        +list builders
+        +SECTIONS list
+    }
+
+    class DocxWriter {
+        +add_title(text) void
+        +add_heading(text) void
+        +add_para(text, missing) void
+        +add_table(headers, rows, missing_cells, note) void
+        +add_missing_note(field_map) void
+        +render(result) void
+        +save(path) str
+    }
+
+    class ReportDefaults {
+        +str MISSING$
+        +dict FIELD_SOURCES$
+        +dict TABLE_HEADERS$
+        +list~str~ FIVE_LEVEL$
+        +missing_cell() str$
+    }
+
+    class FinancialData {
+        +int id
+        +int enterprise_id
+        +str scope  "current|prior"
+        +str period_label
+        +float total_assets
+        +float total_liab
+        +float current_assets
+        +float current_liab
+        +float inventory
+        +float revenue
+        +float net_profit
+        +float operating_cashflow
+        +float asset_liab_ratio
+        +float current_ratio
+        +float quick_ratio
+        +str source
+        +str updated_at
+    }
+
+    class CreditLine {
+        +int id
+        +int enterprise_id
+        +str bank_name
+        +str business_type
+        +float amount
+        +float balance
+        +str guarantee_type
+        +str five_level
+        +str due_date
+        +str source
+    }
+
+    class Guarantee {
+        +int id
+        +int enterprise_id
+        +str guarantor
+        +str guarantee_type
+        +str collateral
+        +float appraised_value
+        +float pledge_ratio
+        +str value_change
+        +str source
+    }
+
+    ReportEngine --> SectionBuilder : schedules
+    ReportEngine --> DocxWriter : uses
+    ReportEngine --> ReportContext : consumes
+    ReportEngine ..> SectionResult : produces
+    PostLoanReport --> SectionBuilder : registers 8
+    SectionBuilder --> ReportContext : reads
+    SectionBuilder --> ReportDefaults : uses
+    SectionBuilder ..> SectionResult : returns
+    ReportContext --> FinancialData : has
+    ReportContext --> CreditLine : has
+    ReportContext --> Guarantee : has
+    DocxWriter --> ReportDefaults : uses

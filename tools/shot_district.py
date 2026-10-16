@@ -1,4 +1,8 @@
-"""验证三级下钻：辽宁省 → 沈阳市（区县级）截图。"""
+"""验证三级下钻：辽宁省 → 沈阳市（区县级）截图。
+
+v2：MapView 已改为纯 Qt 自绘（无 WebEngine），下钻走公开 API
+``MapView.drill_to(name)``。
+"""
 import os
 import sys
 
@@ -20,21 +24,19 @@ def main() -> int:
     win.show()
 
     def step1():
-        win.map_view.view.page().runJavaScript("drillTo('辽宁省');")
-        QTimer.singleShot(4000, step2)
+        win.map_view.drill_to("辽宁省")
+        QTimer.singleShot(500, step2)
 
     def step2():
-        win.map_view.view.page().runJavaScript(
-            "var hit=Object.keys(cityAdcode).find(function(n){return n.indexOf('抚顺')>=0});"
-            "if(hit){drillToDistrict(hit);} true;")
-        QTimer.singleShot(3500, snap)
+        win.map_view.drill_to("沈阳市")   # 辽宁省沈阳市 -> 区县级（210100）
+        QTimer.singleShot(500, snap)
 
     def snap():
         win.grab().save(out)
         print("saved:", out)
         app.quit()
 
-    QTimer.singleShot(8000, step1)
+    QTimer.singleShot(1200, step1)
     sys.exit(app.exec())
 
 

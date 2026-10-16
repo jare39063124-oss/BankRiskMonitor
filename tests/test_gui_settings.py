@@ -6,7 +6,6 @@
 
 运行：python -m unittest tests.test_gui_settings -v
 """
-import atexit
 import gc
 import json
 import os
@@ -16,38 +15,6 @@ import unittest
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-# offscreen 下禁用 GPU：规避 Chromium 在 Windows 进程退出清理时的访问违例（不影响断言）
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
-
-# Chromium（QtWebEngine）在解释器关闭阶段析构时仍可能触发 Windows 访问违例
-# （0xC0000005），导致用例全部通过却报非零退出码。此处经 atexit 在测试流程
-# 结束后直接终止进程、跳过 Qt 清理：退出码沿用 unittest 的 sys.exit 结果
-# （True->1 / False->0），未捕获异常按 1 处理。仅影响本测试进程。
-_EXIT_CODE = [0]
-_real_exit, _real_excepthook = sys.exit, sys.excepthook
-
-
-def _capture_exit(code=0):
-    _EXIT_CODE[0] = int(bool(code))
-    _real_exit(code)
-
-
-def _capture_exc(*args):
-    _EXIT_CODE[0] = 1
-    _real_excepthook(*args)
-
-
-sys.exit, sys.excepthook = _capture_exit, _capture_exc
-
-
-@atexit.register
-def _skip_qt_teardown():
-    try:
-        sys.stdout.flush()
-        sys.stderr.flush()
-    except Exception:
-        pass
-    os._exit(_EXIT_CODE[0])
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for p in (ROOT, os.path.join(ROOT, "src")):
@@ -63,7 +30,7 @@ from src.core import sync as sync_mod  # noqa: E402
 with open(os.path.join(ROOT, "config.yaml"), "r", encoding="utf-8") as _f:
     settings._config = yaml.safe_load(_f) or {}
 
-# 含 QtWebEngineWidgets 的模块必须先于 QApplication 导入
+# v2 MapView 为纯 Qt 自绘，无 QtWebEngine/QtWebChannel 依赖，导入顺序不再受限
 from src.gui import main_window as mw_mod  # noqa: E402
 from src.gui.main_window import MainWindow, run_refresh_cycle  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402

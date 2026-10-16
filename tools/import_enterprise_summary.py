@@ -77,9 +77,13 @@ def main() -> int:
             v = r[i] if i is not None and i < len(r) else None
             if v is not None and str(v).strip() and str(v).strip() != "—":
                 note_parts.append(f"{label}：{str(v).strip()}")
+        i_loan = idx.get("放款日期")
+        loan_date = (str(r[i_loan]).strip()
+                     if i_loan is not None and i_loan < len(r) and r[i_loan] is not None
+                     else "")
         eid = db.upsert_enterprise(
             name=name, credit_code=code, province=prov, city=city,
-            credit_note="；".join(note_parts))
+            credit_note="；".join(note_parts), loan_date=loan_date)
         print(f"[ok] {name}  {prov}/{city}  (id={eid})")
         imported += 1
     wb.close()
