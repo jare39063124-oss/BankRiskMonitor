@@ -391,5 +391,147 @@ class BaselineStoreTest(DbBase):
         self.assertEqual(bc.BaselineStore.get(1).lawsuit_count, 1)
 
 
+# ---------------------------------------------------------------------------
+# 7) 回归（QA 发现缺陷修复）：FIX-1 历史/自动源取"放款前最近状态"
+# ---------------------------------------------------------------------------
+class ParseDateSemanticRangeTest(unittest.TestCase):
+    """FIX-2：``parse_date`` 追加月/日范围校验（非法月/日 → ''）。"""
+
+    def test_invalid_month(self):
+        self.assertEqual(bc.parse_date("2026-13-45"), "")
+        self.assertEqual(bc.parse_date("2026-00-10"), "")
+
+    def test_invalid_day(self):
+        self.assertEqual(bc.parse_date("2026-10-00"), "")
+        self.assertEqual(bc.parse_date("2026-04-31"), "")   # 4 月仅 30 天
+        self.assertEqual(bc.parse_date("2026-02-30"), "")   # 2 月上限 28/29
+
+    def test_leap_year(self):
+        self.assertEqual(bc.parse_date("2026-02-29"), "")            # 2026 非闰年
+        self.assertEqual(bc.parse_date("2024-02-29"), "2024-02-29")  # 2024 闰年
+        self.assertEqual(bc.parse_date("2000-02-29"), "2000-02-29")  # 400 整除 → 闰年
+        self.assertEqual(bc.parse_date("1900-02-29"), "")            # 100 整除非 400 → 平年
+
+    def test_valid_boundaries_still_ok(self):
+        self.assertEqual(bc.parse_date("2026-01-31"), "2026-01-31")
+        self.assertEqual(bc.parse_date("2026-12-31"), "2026-12-31")
+        self.assertEqual(bc.parse_date("2026-09-29 10:00:00"), "2026-09-29")
+        self.assertEqual(bc.parse_date("  2026-09-29  "), "2026-09-29")
+
+    def test_semantically_invalid_date_classify_undetermined(self):
+        b = baseline(legal_person="张三")
+        v = bc.classify(ev(title="甲公司：法定代表人由张三变更为赵六",
+                           occurred_at="2026-13-45"), ent(), b)
+        self.assertEqual(v.bucket, bc.BUCKET_UNDETERMINED)
+        self.assertEqual(v.subtype, "no_date")
+
+
+class ClassifyOrderTest(unittest.TestCase):
+    """FIX-3：放款前事件先判 ``baseline``（无需基线参与），放款后才检查无基线。"""
+
+    def test_preloan_event_without_baseline_is_baseline(self):
+        # 放款前事件 + 无基线快照 → baseline（放款前一律记录、不视为问题）
+        v = bc.classify(ev(title="甲公司：法定代表人由张三变更为赵六",
+                           occurred_at=BEFORE), ent(), None)
+        self.assertEqual(v.bucket, bc.BUCKET_BASELINE)
+        self.assertEqual(v.subtype, "baseline")
+        self.assertFalse(v.is_problem())
+
+    def test_postloan_event_without_baseline_is_undetermined(self):
+        # 放款后事件 + 无基线 → undetermined(no_baseline)（不得降级）
+        v = bc.classify(ev(title="甲公司：法定代表人由张三变更为赵六",
+                           occurred_at=AFTER), ent(), None)
+        self.assertEqual(v.bucket, bc.BUCKET_UNDETERMINED)
+        self.assertEqual(v.subtype, "no_baseline")
+
+    def test_no_loan_still_undetermined(self):
+        # 无放款日优先级最高
+        v = bc.classify(ev(title="x", occurred_at=BEFORE), ent(loan_date=""), None)
+        self.assertEqual(v.subtype, "no_loan")
+
+
+class HistoryLatestPreLoanStateTest(DbBase):
+    """FIX-1：历史来源建基线取"放款前最近一次"变更后的状态。"""
+
+    def _seed(self):
+        # 放款前两次法定代表人变更：8 月 张三→李四，9 月 李四→王五
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由张三变更为李四",
+                              source="gsxt", occurred_at="2026-08-01"))
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由李四变更为王五",
+                              source="gsxt", occurred_at="2026-09-10"))
+
+    def test_history_uses_latest_preloan_state(self):
+        self._seed()
+        s = bc.build_baseline(ent())
+        self.assertIsNotNone(s)
+        self.assertEqual(s.legal_person, "王五")
+        self.assertEqual(s.source, "history")
+
+    def test_history_latest_no_false_negative(self):
+        self._seed()
+        s = bc.build_baseline(ent())
+        v = bc.classify(ev(title="甲公司：法定代表人由王五变更为李四"), ent(), s)
+        self.assertEqual(v.bucket, bc.BUCKET_CHANGE)
+
+    def test_history_latest_no_false_positive(self):
+        self._seed()
+        s = bc.build_baseline(ent())
+        v = bc.classify(ev(title="甲公司：法定代表人由赵六变更为王五"), ent(), s)
+        self.assertEqual(v.bucket, bc.BUCKET_BASELINE)
+
+    def test_history_three_changes_takes_last(self):
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由甲变更为乙",
+                              source="gsxt", occurred_at="2026-08-01"))
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由乙变更为丙",
+                              source="gsxt", occurred_at="2026-08-20"))
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由丙变更为丁",
+                              source="gsxt", occurred_at="2026-09-10"))
+        s = bc.build_baseline(ent())
+        self.assertEqual(s.legal_person, "丁")
+
+    def test_history_ignores_postloan_event(self):
+        # 放款后事件不得进入基线（即便日期更近）
+        self._seed()
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由王五变更为赵六",
+                              source="gsxt", occurred_at="2026-10-05"))
+        s = bc.build_baseline(ent())
+        self.assertEqual(s.legal_person, "王五")
+
+
+class AutoSourceLatestPreLoanChangeTest(DbBase):
+    """FIX-1：数据源 changes 也按 change_date 取放款前最近一次。"""
+
+    def test_changes_take_latest_preloan(self):
+        sources = [{
+            "source": "tyc_mcp",
+            "changes": [
+                {"change_item": "法定代表人", "before": "张三", "after": "李四",
+                 "change_date": "2026-08-01"},
+                {"change_item": "法定代表人", "before": "李四", "after": "王五",
+                 "change_date": "2026-09-10"},
+                {"change_item": "法定代表人", "before": "王五", "after": "赵六",
+                 "change_date": "2026-10-05"},   # 放款后 → 忽略
+            ],
+        }]
+        snap = bc.build_baseline(ent(), sources)
+        self.assertIsNotNone(snap)
+        self.assertEqual(snap.legal_person, "王五")
+
+    def test_profile_outranks_history_same_dim(self):
+        # 跨来源优先级不变：①自动源 profile 已写入的维，历史来源不覆盖
+        db.insert_event(Event(enterprise_id=1, category="biz_change",
+                              title="甲公司：法定代表人由张三变更为李四",
+                              source="gsxt", occurred_at="2026-08-01"))
+        sources = [{"source": "tyc_mcp", "profile": {"legal_person": "王五"}}]
+        snap = bc.build_baseline(ent(), sources)
+        self.assertEqual(snap.legal_person, "王五")
+
+
 if __name__ == "__main__":
     unittest.main()

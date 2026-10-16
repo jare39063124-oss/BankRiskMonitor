@@ -1,0 +1,155 @@
+100 INFO: PyInstaller: 6.21.0, contrib hooks: 2026.6
+100 INFO: Python: 3.11.9
+110 INFO: Platform: Windows-10-10.0.22631-SP0
+110 INFO: Python environment: D:\hermes\hermes-agent\venv
+346 INFO: Module search paths (PYTHONPATH):
+['E:\\软件工程项目\\BankRiskMonitor\\src',
+ 'E:\\软件工程项目\\BankRiskMonitor',
+ 'E:\\workbuddy\\resources\\app.asar.unpacked\\cli\\vendor\\shim',
+ 'D:\\Python\\Python311\\python311.zip',
+ 'D:\\Python\\Python311\\DLLs',
+ 'D:\\Python\\Python311\\Lib',
+ 'D:\\Python\\Python311',
+ 'D:\\hermes\\hermes-agent\\venv',
+ 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages',
+ '__editable__.hermes_agent-0.17.0.finder.__path_hook__',
+ 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\win32',
+ 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\win32\\lib',
+ 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\Pythonwin',
+ 'E:\\软件工程项目\\BankRiskMonitor',
+ 'E:\\软件工程项目\\BankRiskMonitor\\src']
+646 INFO: Appending 'datas' from .spec
+650 INFO: checking Analysis
+650 INFO: Building Analysis because Analysis-00.toc is non existent
+650 INFO: Looking for Python shared library...
+650 INFO: Using Python shared library: D:\Python\Python311\python311.dll
+650 INFO: Running Analysis Analysis-00.toc
+650 INFO: Target bytecode optimization level: 0
+650 INFO: Initializing module dependency graph...
+650 INFO: Initializing module graph hook caches...
+666 INFO: Analyzing modules for base_library.zip ...
+1440 INFO: Processing standard module hook 'hook-heapq.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+1512 INFO: Processing standard module hook 'hook-encodings.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+2836 INFO: Processing standard module hook 'hook-math.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+2941 INFO: Processing standard module hook 'hook-pickle.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4321 INFO: Caching module dependency graph...
+4365 INFO: Analyzing E:\软件工程项目\BankRiskMonitor\main.py
+4401 INFO: Processing standard module hook 'hook-sqlite3.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4781 INFO: Processing standard module hook 'hook-PySide6.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4972 INFO: Processing standard module hook 'hook-shiboken6.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+5115 INFO: Processing standard module hook 'hook-PySide6.QtNetwork.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+7513 INFO: Processing standard module hook 'hook-PySide6.QtCore.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11617 INFO: Processing standard module hook 'hook-PySide6.QtWidgets.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+16593 INFO: Processing standard module hook 'hook-PySide6.QtGui.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+47008 INFO: Processing standard module hook 'hook-urllib3.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+47181 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+47181 INFO: SetuptoolsInfo: initializing cached setuptools info...
+49326 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+49329 INFO: Processing standard module hook 'hook-setuptools.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49358 INFO: Processing standard module hook 'hook-platform.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49365 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49367 INFO: Processing pre-find-module-path hook 'hook-distutils.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+49645 INFO: Processing standard module hook 'hook-distutils.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49664 INFO: Processing standard module hook 'hook-distutils.util.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49697 INFO: Processing standard module hook 'hook-sysconfig.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49718 INFO: Processing standard module hook 'hook-_osx_support.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49736 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49827 INFO: Processing standard module hook 'hook-_ctypes.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49858 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50115 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50195 INFO: Processing standard module hook 'hook-xml.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50979 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50979 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+50986 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50986 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51335 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51569 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51595 INFO: Processing standard module hook 'hook-importlib_metadata.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+51615 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51935 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51937 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+52555 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+53232 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+53569 INFO: Processing standard module hook 'hook-cryptography.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+54775 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+55126 INFO: Processing standard module hook 'hook-certifi.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+55385 INFO: Processing standard module hook 'hook-openpyxl.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+55495 INFO: Processing standard module hook 'hook-numpy.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+56416 INFO: Processing standard module hook 'hook-difflib.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+56465 INFO: Processing standard module hook 'hook-psutil.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+57812 INFO: Processing standard module hook 'hook-lxml.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+58111 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+58121 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+58205 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+58916 INFO: Processing standard module hook 'hook-PIL.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+59007 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+59448 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+60075 INFO: Processing standard module hook 'hook-docx.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+61703 INFO: Processing standard module hook 'hook-Crypto.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+62440 INFO: Processing standard module hook 'hook-pycparser.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+65918 INFO: Analyzing hidden import 'providers'
+65918 INFO: Analyzing hidden import 'providers.base'
+65925 INFO: Analyzing hidden import 'providers.biz_aiqicha'
+65935 INFO: Analyzing hidden import 'providers.biz_apizero'
+65940 INFO: Analyzing hidden import 'providers.biz_commercial'
+65947 INFO: Analyzing hidden import 'providers.biz_gsxt'
+66345 INFO: Analyzing hidden import 'providers.biz_juhe'
+66350 INFO: Analyzing hidden import 'providers.court_wenshu'
+66354 INFO: Analyzing hidden import 'providers.court_zxgk'
+66359 INFO: Analyzing hidden import 'providers.credit_china'
+66364 INFO: Analyzing hidden import 'providers.news_baidu'
+66370 INFO: Analyzing hidden import 'providers.news_istero'
+66375 INFO: Analyzing hidden import 'providers.news_rss'
+66535 INFO: Analyzing hidden import 'providers.news_sogou'
+66535 INFO: Analyzing hidden import 'providers.newsapi_org'
+66539 INFO: Analyzing hidden import 'providers.social_base'
+66545 INFO: Analyzing hidden import 'providers.social_douyin'
+66549 INFO: Analyzing hidden import 'providers.social_kuaishou'
+66549 INFO: Analyzing hidden import 'providers.social_wechat'
+66555 INFO: Analyzing hidden import 'providers.social_weibo'
+66559 INFO: Analyzing hidden import 'providers.social_xiaohongshu'
+66560 INFO: Processing module hooks (post-graph stage)...
+66742 INFO: Processing standard module hook 'hook-webbrowser.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+66876 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+66890 WARNING: Hidden import "pycparser.lextab" not found!
+66890 WARNING: Hidden import "pycparser.yacctab" not found!
+67221 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+67635 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+67648 INFO: Performing binary vs. data reclassification (284 entries)
+67708 INFO: Looking for ctypes DLLs
+67816 INFO: Analyzing run-time hooks ...
+67823 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+67825 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+67826 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+67829 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+67829 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+67829 INFO: Including run-time hook 'pyi_rth_pyside6.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+67829 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+67833 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+67860 INFO: Creating base_library.zip...
+67879 INFO: Looking for dynamic libraries
+69267 INFO: Extra DLL search directories (AddDllDirectory): ['D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\shiboken6', 'D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\numpy.libs']
+69267 INFO: Extra DLL search directories (PATH): ['D:\\hermes\\hermes-agent\\venv\\Lib\\site-packages\\PySide6']
+70984 INFO: Warnings written to E:\软件工程项目\BankRiskMonitor\build_qa_verify\BankRiskMonitor\warn-BankRiskMonitor.txt
+71162 INFO: Graph cross-reference written to E:\软件工程项目\BankRiskMonitor\build_qa_verify\BankRiskMonitor\xref-BankRiskMonitor.html
+71229 INFO: checking PYZ
+71229 INFO: Building PYZ because PYZ-00.toc is non existent
+71229 INFO: Building PYZ (ZlibArchive) E:\软件工程项目\BankRiskMonitor\build_qa_verify\BankRiskMonitor\PYZ-00.pyz
+72399 INFO: Building PYZ (ZlibArchive) E:\软件工程项目\BankRiskMonitor\build_qa_verify\BankRiskMonitor\PYZ-00.pyz completed successfully.
+72436 INFO: checking PKG
+72439 INFO: Building PKG because PKG-00.toc is non existent
+72439 INFO: Building PKG (CArchive) BankRiskMonitor.pkg
+87967 INFO: Building PKG (CArchive) BankRiskMonitor.pkg completed successfully.
+87981 INFO: Bootloader D:\hermes\hermes-agent\venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+87981 INFO: checking EXE
+87981 INFO: Building EXE because EXE-00.toc is non existent
+87981 INFO: Building EXE from EXE-00.toc
+87981 INFO: Copying bootloader EXE to E:\软件工程项目\BankRiskMonitor\dist_qa_verify\BankRiskMonitor.exe
+87983 INFO: Copying icon to EXE
+87985 INFO: Copying 0 resources to EXE
+87985 INFO: Embedding manifest in EXE
+87989 INFO: Appending PKG archive to EXE
+88034 INFO: Fixing EXE headers
+88331 INFO: Building EXE from EXE-00.toc completed successfully.
+88336 INFO: Build complete! The results are available in: E:\软件工程项目\BankRiskMonitor\dist_qa_verify
+EXIT=0

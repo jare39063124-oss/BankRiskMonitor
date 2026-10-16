@@ -54,7 +54,7 @@ sources:
         feeds:
           - https://rsshub.app/pengpai/channels/25
     - name: istero_pengpai
-      enabled: true
+      enabled: false
       tier: 2
       requires_key: true
       class: providers.news_istero.IsteroNewsProvider

@@ -154,12 +154,30 @@ class Verdict:
 # ---------------------------------------------------------------------------
 # 日期工具（ARCH §8.5 冻结签名）
 # ---------------------------------------------------------------------------
+def _days_in_month(year: int, month: int) -> int:
+    """返回指定年月的天数（含闰年 2 月 29 日）。"""
+    if month == 2:
+        leap = (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0))
+        return 29 if leap else 28
+    return 30 if month in (4, 6, 9, 11) else 31
+
+
 def parse_date(value) -> str:
-    """归一为 ``'YYYY-MM-DD'``；任何非法/空值（含带时间戳、非 ISO 分隔）→ ``''``。"""
+    """归一为 ``'YYYY-MM-DD'``；任何非法/空值 → ``''``。
+
+    合法性校验分两步：① 形状 ``YYYY-MM-DD``（带时间戳会被截断到前 10 位、
+    首尾空白会被去除）；② 月/日**语义范围**校验（月 1–12，日 1–当月天数，
+    含闰年）——如 ``'2026-13-45'`` 视为非法返回 ``''``（PRD §3.5）。
+    """
     s = str(value or "").strip()[:10]
-    if len(s) == 10 and s[4] == "-" and s[7] == "-" and s.replace("-", "").isdigit():
-        return s
-    return ""
+    if not (len(s) == 10 and s[4] == "-" and s[7] == "-" and s.replace("-", "").isdigit()):
+        return ""
+    year, month, day = int(s[0:4]), int(s[5:7]), int(s[8:10])
+    if not (1 <= month <= 12):
+        return ""
+    if not (1 <= day <= _days_in_month(year, month)):
+        return ""
+    return s
 
 
 def date_ge(a, b) -> bool:
@@ -356,15 +374,20 @@ def _flag_text(v) -> str:
 def classify(event, ent, baseline) -> Verdict:
     """三态判定（纯函数，无 IO）：change / baseline / undetermined。
 
-    判定顺序（与 PRD §3.5/§3.6、ARCH §3.3 严格一致）::
+    判定顺序（PRD §3.5/§3.6、ARCH §3.3；FIX-3 口径澄清：放款前事件一律
+    ``baseline``，无需基线参与）::
 
         1) 无放款日                    -> undetermined(no_loan)
         2) 事件日期为空/非法           -> undetermined(no_date)
-        3) 无基线                      -> undetermined(no_baseline)
-        4) 事件日期 < 放款日           -> baseline（放款前·基线）
-        5) 事件日期 >= 放款日（含同日）：
-             diff 非空                 -> change（放款后变更·问题）
-             否则                      -> baseline（无变化，仅记录）
+        3) 事件日期 < 放款日           -> baseline（放款前·基线，非问题、完整留存）
+        4) 事件日期 >= 放款日：
+             无基线                   -> undetermined(no_baseline)
+             diff 非空                -> change（放款后变更·问题）
+             否则                     -> baseline（无变化，仅记录）
+
+    说明：放款日前的日期本身即为充分证据——用户明确要求"放款前的信息一律
+    记录但不视为问题"，故 ``d < loan`` 先于"无基线"判断（放款前事件在无基线
+    快照时也判 ``baseline``，而非 ``undetermined``）。
     """
     loan = parse_date(getattr(ent, "loan_date", "") if ent is not None else "")
     if not loan:
@@ -376,13 +399,13 @@ def classify(event, ent, baseline) -> Verdict:
         return Verdict(BUCKET_UNDETERMINED, "事件日期未知，无法判定放款前后",
                        [], subtype="no_date")
 
+    if d < loan:  # 放款前 → 基线（非问题，完整留存；无需基线参与判定）
+        return Verdict(BUCKET_BASELINE, "放款前·基线（非问题）",
+                       [], subtype="baseline")
+
     if baseline is None:
         return Verdict(BUCKET_UNDETERMINED, "基线缺失，无法对比，本期按现状披露",
                        [], subtype="no_baseline")
-
-    if d < loan:  # 放款前 → 基线（非问题，完整留存）
-        return Verdict(BUCKET_BASELINE, "放款前·基线（非问题）",
-                       [], subtype="baseline")
 
     # 放款后（含同日）→ 逐维对比
     dim = dimension_of(event)
@@ -443,14 +466,23 @@ def _profile_to_dims(profile: Dict) -> Dict[str, object]:
 
 
 def _apply_auto_source(spec: Dict, loan: str, dims: Dict, dim_sources: Dict) -> None:
-    """① 数据源带日期的变更记录 / 档案（连接器或 gsxt/爱企查）→ 逐维写入。"""
+    """① 数据源带日期的变更记录 / 档案（连接器或 gsxt/爱企查）→ 逐维写入。
+
+    同一来源内的多条变更记录按 ``change_date`` **降序**（放款前最近一次在前）消费，
+    即同一维取"放款前最近一次"变更后的值（而非最早一次）。跨来源优先级不变。
+    """
     src_name = str(spec.get("source") or spec.get("connector") or "auto")
     for dim, value in _profile_to_dims(spec.get("profile") or {}).items():
         _merge_dim(dims, dim_sources, dim, value, src_name)
+    # 仅消费放款前的变更记录，并按变更日期降序（最近一次在前）→ 同维取最近值
+    pre_changes = []
     for ch in spec.get("changes") or []:
         cd = parse_date(ch.get("change_date"))
-        if not cd or cd >= loan:  # 仅消费放款前的变更记录
+        if not cd or cd >= loan:
             continue
+        pre_changes.append((cd, ch))
+    pre_changes.sort(key=lambda pair: pair[0], reverse=True)
+    for _cd, ch in pre_changes:
         item = str(ch.get("change_item") or "")
         after = ch.get("after")
         dim = _dim_of_text(f"{item} {after}", "biz_change")
@@ -465,10 +497,18 @@ def _apply_manual_row(row: BaselineSnapshot, dims: Dict, dim_sources: Dict) -> N
 
 
 def _apply_history(events: Sequence[Event], loan: str, dims: Dict, dim_sources: Dict) -> None:
-    """③ 放款前已采集的历史事件 → 逐维派生写入。"""
+    """③ 放款前已采集的历史事件 → 逐维派生写入。
+
+    状态维（``STATE_DIMS`` / 被执行 / 税务）取**放款前最近一次**变更后的取值
+    （即放款时点的实际状态）：将放款前事件按 ``occurred_at`` **降序**（最新在前、
+    同日按 id 降序）遍历，配合 ``_merge_dim`` 的"首个非空即留"语义 → 每一维命中的
+    即"最近一次"有效变更值。跨来源优先级不受影响（①自动源/②手动已写入的维仍不会
+    被历史来源覆盖，因 ``_merge_dim`` 仅在目标维为空时写入）。
+    """
     pre = [e for e in events
            if parse_date(getattr(e, "occurred_at", "")) and parse_date(e.occurred_at) < loan]
-    pre.sort(key=lambda e: (parse_date(e.occurred_at), e.id or 0))
+    # 放款前事件按日期降序（最新在前）→ 同一维多次变更时保留"最近一次"后的状态
+    pre.sort(key=lambda e: (parse_date(e.occurred_at), e.id or 0), reverse=True)
     lawsuit = penalty = 0
     abnormal = 0
     tags: set = set()

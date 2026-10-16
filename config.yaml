@@ -37,7 +37,7 @@ sources:
         feeds:
           - https://rsshub.app/pengpai/channels/25
     - name: istero_pengpai
-      enabled: true
+      enabled: false     # 需 Key（token 留空）：按"需 Key 源默认关闭"口径保持一致性
       tier: 2            # 条件可用：需 token
       requires_key: true
       class: providers.news_istero.IsteroNewsProvider
