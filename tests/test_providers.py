@@ -469,5 +469,104 @@ class WenshuTest(unittest.TestCase):
                 p.fetch(Enterprise(id=1, name="测试公司"))
 
 
+class CreditChinaTest(unittest.TestCase):
+    """信用中国适配器（R2 新增；等级③ 尽力而为）。"""
+
+    def _provider(self):
+        from src.providers import credit_china as m
+        return m, m.CreditChinaProvider({})
+
+    def test_parse_records(self):
+        m, p = self._provider()
+        data = {"data": {"list": [
+            {"name": "测试公司", "caseNo": "X1", "publishDate": "2026-09-20",
+             "content": "行政处罚 罚款50万"},
+            {"name": "测试公司", "caseNo": "X2", "publishDate": "2026-10-01",
+             "content": "重大税收违法失信"},
+            {"name": "别的公司", "caseNo": "X3", "content": "行政处罚"},   # 非本企业 → 过滤
+        ]}}
+        with mock.patch.object(p, "http_get", return_value=FakeResp(json_data=data)):
+            events = p.fetch(Enterprise(id=1, name="测试公司"))
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(e.category == "enforcement" and e.source == "credit_china"
+                            for e in events))
+        titles = {e.title for e in events}
+        self.assertIn("测试公司：行政处罚（X1）", titles)
+        self.assertIn("测试公司：重大税收违法失信（X2）", titles)
+
+    def test_anti_bot_raises(self):
+        _, p = self._provider()
+        with mock.patch.object(p, "http_get",
+                               return_value=FakeResp("<html>请开启JavaScript验证</html>")):
+            with self.assertRaises(RuntimeError):
+                p.fetch(Enterprise(id=1, name="测试公司"))
+
+    def test_unauthorized_raises(self):
+        _, p = self._provider()
+        with mock.patch.object(p, "http_get", return_value=FakeResp("", status_code=403)):
+            with self.assertRaises(RuntimeError):
+                p.fetch(Enterprise(id=1, name="测试公司"))
+
+    def test_timeout_via_fallback_not_raise(self):
+        # 触网超时 → run_with_fallback 返回 ([], err)，不抛异常（等级③ 允许失败）
+        import requests
+        from src.providers import base as pbase
+        bad = mock.Mock()
+        bad.name = "credit_china"
+        bad.fetch.side_effect = requests.Timeout("timed out")
+        with mock.patch.object(pbase, "load_providers", return_value=[bad]):
+            events, err = pbase.run_with_fallback("enforcement", Enterprise(id=1, name="测试公司"))
+        self.assertEqual(events, [])
+        self.assertIn("credit_china", err)
+
+
+class SourceTierTest(unittest.TestCase):
+    """数据源三级可用性分级（①/②/③）与 UI 文案（ARCH §8.8）。"""
+
+    def test_resolve_tier_explicit(self):
+        from src.providers import base as pbase
+        self.assertEqual(pbase.resolve_tier({"tier": 1}), 1)
+        self.assertEqual(pbase.resolve_tier({"tier": "3"}), 3)
+        self.assertEqual(pbase.resolve_tier({"tier": 2}), 2)
+
+    def test_resolve_tier_inferred(self):
+        from src.providers import base as pbase
+        self.assertEqual(pbase.resolve_tier({"paid": True}), 2)
+        self.assertEqual(pbase.resolve_tier({"requires_key": True}), 2)
+        self.assertEqual(pbase.resolve_tier({"params": {"api_key": ""}}), 2)
+        self.assertEqual(pbase.resolve_tier({}), 1)   # 向后兼容：缺失字段 → 确定可用
+
+    def test_availability_text(self):
+        from src.providers import base as pbase
+        self.assertEqual(
+            pbase.availability_text({"enabled": False, "requires_key": True,
+                                     "params": {"api_key": ""}}), "未配置 Key，已跳过")
+        self.assertEqual(pbase.availability_text({"enabled": False}), "已停用")
+        self.assertEqual(
+            pbase.availability_text({"enabled": True, "tier": 3}, failed=True),
+            "该源当前不可用（反爬/网络）")
+
+    def test_summarize_sources(self):
+        from src.providers import base as pbase
+        s = pbase.summarize_sources({"sources": {"x": [{"enabled": True}, {"enabled": False}]}})
+        self.assertEqual(s, "数据源：1/2 启用")
+
+    def test_config_tiering_no_paid_enabled(self):
+        # 无付费源进入默认启用集；关键源启用/关闭状态符合本轮策略
+        from src.providers import base as pbase
+        cfg = settings.config()
+        names = {}
+        for specs in cfg["sources"].values():
+            for spec in specs:
+                names[spec["name"]] = spec
+                if spec.get("paid"):
+                    self.assertFalse(spec.get("enabled"),
+                                     f"{spec['name']} 为付费源，不得默认启用")
+        self.assertTrue(names["gsxt"]["enabled"])          # ①/③ 启用
+        self.assertTrue(names["credit_china"]["enabled"])  # 新源启用
+        for n in ("juhe_ent", "tianapi", "jisuapi", "commercial_api"):
+            self.assertFalse(names[n]["enabled"], f"{n} 应默认关闭（仅留 Key 位）")
+
+
 if __name__ == "__main__":
     unittest.main()

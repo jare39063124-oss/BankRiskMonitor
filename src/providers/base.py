@@ -42,8 +42,74 @@ class ProviderBase:
             kw.setdefault("proxies", {"http": proxy, "https": proxy})
         return requests.get(url, **kw)
 
+    def _json_get(self, url: str, **kw) -> dict:
+        """JSON 优先 GET（复用 ``http_get`` 的节流/代理/UA/超时）。
+
+        非 200 或返回非 JSON → 抛 ``RuntimeError``（由 ``run_with_fallback`` 兜底）。
+        """
+        resp = self.http_get(url, **kw)
+        if resp.status_code != 200:
+            raise RuntimeError(f"{self.name} HTTP {resp.status_code}")
+        try:
+            return resp.json()
+        except ValueError:
+            raise RuntimeError(f"{self.name} 返回非 JSON")
+
     def fetch(self, ent: Enterprise) -> List[Event]:
         raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# 数据源可用性分级（① 确定可用 / ② 条件可用 / ③ 尽力而为，ARCH §1.6.1/§8.8）
+# 纯函数，供状态栏/设置页复用（T04 GUI 消费），本层不依赖任何 GUI。
+# ---------------------------------------------------------------------------
+def resolve_tier(spec: dict) -> int:
+    """解析数据源可用性等级（1/2/3）；字段缺失时向后兼容推断。
+
+    推断规则（不破坏既有 config）：显式 ``tier`` 优先；未声明时——
+    付费（``paid``）或需 Key（``requires_key``）→ 等级 2（条件可用），否则等级 1。
+    """
+    spec = spec or {}
+    tier = spec.get("tier")
+    try:
+        t = int(tier)  # type: ignore[arg-type]
+        if t in (1, 2, 3):
+            return t
+    except (TypeError, ValueError):
+        pass
+    if spec.get("paid") or spec.get("requires_key"):
+        return 2
+    params = spec.get("params") or {}
+    if "api_key" in params and not params.get("api_key"):
+        return 2
+    return 1
+
+
+def availability_text(spec: dict, failed: bool = False) -> str:
+    """数据源可用性 → UI 文案（冻结，ARCH §8.8）。绝不静默失败。"""
+    spec = spec or {}
+    params = spec.get("params") or {}
+    if not spec.get("enabled"):
+        if spec.get("requires_key") and not params.get("api_key"):
+            return "未配置 Key，已跳过"
+        return "已停用"
+    if failed:
+        if spec.get("requires_key") and not params.get("api_key"):
+            return "未配置 Key，已跳过"
+        return "该源当前不可用（反爬/网络）"
+    return "可用"
+
+
+def summarize_sources(cfg: dict = None) -> str:
+    """状态栏汇总文案：``数据源：{enabled}/{total} 启用``（ARCH §8.8）。"""
+    cfg = cfg if cfg is not None else settings.config()
+    total = enabled = 0
+    for specs in (cfg.get("sources", {}) or {}).values():
+        for spec in specs or []:
+            total += 1
+            if spec.get("enabled"):
+                enabled += 1
+    return f"数据源：{enabled}/{total} 启用"
 
 def load_providers(category: str):
     """按 config.yaml 中该类目的声明顺序实例化启用的 Provider。"""

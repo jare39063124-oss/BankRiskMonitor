@@ -18,9 +18,12 @@ _policy: Dict[str, Any] = {}
 # 内置默认全局配置：内容与项目根 config.yaml 保持一致（自举与兜底共用）
 DEFAULT_CONFIG_YAML = """\
 # BankRiskMonitor 全局配置（声明式数据源登记：可新增/启停/排序，无需改代码）
+# 数据源可用性分级：tier=1 确定可用 / tier=2 条件可用(需 Key/付费) / tier=3 尽力而为(反爬)
 app:
   name: BankRiskMonitor
   refresh_interval_minutes: 30   # 定时刷新周期（0=关闭自动刷新）
+  lookback_years: 3              # 舆情追溯窗口（年）
+  relevance_filter: strict       # 相关性过滤：strict/off
   proxy: ""                      # HTTP 代理，如 http://127.0.0.1:7890；留空不使用
 
 penetration:
@@ -30,44 +33,93 @@ penetration:
 
 # 数据源声明式登记：category -> 有序 Provider 链（排在前面的优先）
 # enabled: true/false 控制启停；params 中的 key 留空表示该源未启用（自动跳过）
+# 本轮策略：只用免费/官方公开源；付费/需 Key 源一律 enabled:false 仅留配置位。
 sources:
   news:
     - name: baidu_news
       enabled: true
+      tier: 3
       class: providers.news_baidu.BaiduNewsProvider
       params: {}
     - name: sogou_news
       enabled: false
+      tier: 3
       class: providers.news_sogou.SogouNewsProvider
       params: {}
     - name: rss
       enabled: true
+      tier: 3
       class: providers.news_rss.RssProvider
       params:
         feeds:
           - https://rsshub.app/pengpai/channels/25
     - name: istero_pengpai
       enabled: true
+      tier: 2
+      requires_key: true
       class: providers.news_istero.IsteroNewsProvider
       params:
         base_url: https://api.istero.com/service/pengpaixinwen/reshoubang
         token: ""
     - name: newsapi
       enabled: false
+      tier: 2
+      requires_key: true
       class: providers.newsapi_org.NewsApiProvider
       params:
         api_key: ""
   biz_change:
     - name: aiqicha
       enabled: true
+      tier: 2
       class: providers.biz_aiqicha.AiqichaProvider
-      params: {}
+      params:
+        cookie: ""
     - name: gsxt
-      enabled: false
+      enabled: true
+      tier: 3
       class: providers.biz_gsxt.GsxtProvider
       params: {}
+    - name: apizero
+      enabled: true
+      tier: 2
+      class: providers.biz_apizero.ApiZeroProvider
+      params:
+        api_key: ""
+    - name: tianapi
+      enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
+      supports_mcp: true
+      class: providers.biz_commercial.CommercialApiProvider
+      params:
+        base_url: ""
+        api_key: ""
+        vendor: tianapi
+    - name: jisuapi
+      enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
+      class: providers.biz_commercial.CommercialApiProvider
+      params:
+        base_url: ""
+        api_key: ""
+        vendor: jisuapi
+    - name: juhe_ent
+      enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
+      class: providers.biz_juhe.JuheEnterpriseProvider
+      params:
+        api_key: ""
     - name: commercial_api
       enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
         base_url: ""     # 天眼查/企查查/白牛等商业 API 地址
@@ -76,10 +128,14 @@ sources:
   lawsuit:
     - name: wenshu
       enabled: true
+      tier: 3
       class: providers.court_wenshu.WenshuProvider
       params: {}
     - name: commercial_api
       enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
         base_url: ""
@@ -88,15 +144,56 @@ sources:
   enforcement:
     - name: zxgk
       enabled: true
+      tier: 3
       class: providers.court_zxgk.ZxgkProvider
       params: {}
+    - name: credit_china
+      enabled: true
+      tier: 3
+      class: providers.credit_china.CreditChinaProvider
+      params:
+        endpoint: ""
     - name: commercial_api
       enabled: false
+      tier: 2
+      paid: true
+      requires_key: true
       class: providers.biz_commercial.CommercialApiProvider
       params:
         base_url: ""
         api_key: ""
         vendor: qichacha
+  social:
+    - name: weibo
+      enabled: true
+      tier: 3
+      class: providers.social_weibo.WeiboProvider
+      params:
+        cookie: ""
+    - name: wechat_sogou
+      enabled: true
+      tier: 3
+      class: providers.social_wechat.SogouWeixinProvider
+      params:
+        cookie: ""
+    - name: douyin
+      enabled: true
+      tier: 3
+      class: providers.social_douyin.DouyinProvider
+      params:
+        cookie: ""
+    - name: kuaishou
+      enabled: true
+      tier: 3
+      class: providers.social_kuaishou.KuaishouProvider
+      params:
+        cookie: ""
+    - name: xiaohongshu
+      enabled: true
+      tier: 3
+      class: providers.social_xiaohongshu.XiaohongshuProvider
+      params:
+        cookie: ""
 
 network:
   timeout_seconds: 15

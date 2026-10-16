@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-16T14:30:00",
+  "connector": "tyc_mcp",
+  "companies": [
+    {
+      "name": "样例测试公司",
+      "credit_code": "91211500SAMPLE001",
+      "profile": {
+        "legal_person": "赵六",
+        "reg_capital": "1000万人民币",
+        "shareholders": [{"name": "李四", "ratio": "60%"}, {"name": "王五", "ratio": "40%"}],
+        "business_scope": "房地产开发；物业管理",
+        "business_status": "存续",
+        "abnormal": false,
+        "tax_status": "",
+        "risk_tags": ["失信", "经营异常"]
+      },
+      "changes": [
+        {"change_item": "法定代表人", "before": "张三", "after": "赵六", "change_date": "2026-10-05"},
+        {"change_item": "注册资本", "before": "500万", "after": "1000万", "change_date": ""},
+        {"change_item": "股东", "before": "李四 100%", "after": "李四 60%/王五 40%", "change_date": "2026-10-16"}
+      ],
+      "lawsuits": [
+        {"title": "合同纠纷", "amount": "120万", "case_no": "(2026)辽01民初123号", "date": "2026-09-20"}
+      ],
+      "enforcements": [
+        {"title": "被执行人", "case_no": "(2026)辽01执456号", "date": "2026-10-01"}
+      ],
+      "url": "https://www.tianyancha.com/company/123456"
+    }
+  ]
+}
