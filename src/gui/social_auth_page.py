@@ -3,13 +3,20 @@
 用户可用「小号」在程序拉起的专用浏览器里登录抖音/快手/小红书/微博，
 登录态长期保留在本机（专用浏览器配置目录），程序按需读取并驱动浏览器抓取。
 
+另含 **OpenCLI 后端**配置：复用已登录 Chrome 做跨平台采集，
+提供安装自检、平台清单勾选与启停开关。
+
 提供两种用法：
 - ``SocialAuthWidget``：可嵌入设置中心页签；
 - ``SocialAuthDialog``：独立弹窗（主窗口工具栏直接进入）。
 """
+import os
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -21,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core import social_auth
+from ..core import settings, social_auth
 from .hover_effect import setup_dialog_hover
 from .workers import FnWorker
 
@@ -35,6 +42,21 @@ SITE_HINTS = {
     "xiaohongshu": "小红书搜索页",
     "wechat_sogou": "搜狗微信搜索（无需登录）",
 }
+
+# OpenCLI 可选平台（按信贷风控相关性排序）
+OPENCLI_PLATFORMS = [
+    ("weibo", "微博"), ("xiaohongshu", "小红书"), ("weixin", "微信公众号"),
+    ("douyin", "抖音"), ("zhihu", "知乎"), ("tieba", "百度贴吧"),
+    ("hupu", "虎扑"), ("bilibili", "哔哩哔哩"), ("jike", "即刻"),
+    ("36kr", "36氪"), ("linux-do", "LinuxDo"), ("nowcoder", "牛客网"),
+    ("sinablog", "新浪博客"), ("douban", "豆瓣"), ("dianping", "大众点评"),
+    ("pixiv", "Pixiv"), ("mubu", "幕布"), ("weread", "微信读书"),
+    ("gov-policy", "政府政策"), ("gov-law", "法律法规"),
+    ("powerchina", "电建集团"), ("twitter", "Twitter"), ("reddit", "Reddit"),
+    ("youtube", "YouTube"), ("facebook", "Facebook"),
+    ("instagram", "Instagram"), ("linkedin", "LinkedIn"), ("tiktok", "TikTok"),
+    ("hackernews", "HackerNews"), ("zlibrary", "Z-Library"),
+]
 
 
 class SocialAuthWidget(QWidget):
@@ -99,8 +121,183 @@ class SocialAuthWidget(QWidget):
         lay.addWidget(self.tree, 1)
         lay.addWidget(self.status_label)
         lay.addLayout(btns)
+        lay.addWidget(self._build_opencli_box())
         self._reload()
         setup_dialog_hover(self)
+
+    # ---------- OpenCLI 后端 ----------
+    def _build_opencli_box(self) -> QWidget:
+        """OpenCLI 后端配置区：启停开关 + 平台清单 + 安装自检。"""
+        box = QGroupBox("OpenCLI 后端（复用已登录 Chrome 跨平台采集）", self)
+        self.opencli_enabled = QCheckBox("启用 OpenCLI 后端", box)
+        self.opencli_status = QLabel("", box)
+        self.opencli_status.setProperty("secondary", True)
+        self.opencli_status.setWordWrap(True)
+
+        self.opencli_checks = {}
+        plat_lay = QHBoxLayout()
+        for key, label in OPENCLI_PLATFORMS:
+            cb = QCheckBox(label, box)
+            self.opencli_checks[key] = cb
+            plat_lay.addWidget(cb)
+        plat_lay.addStretch(1)
+        plat_wrap = QWidget(box)
+        plat_wrap.setLayout(plat_lay)
+
+        check_btn = QPushButton("安装自检", box)
+        check_btn.clicked.connect(self._opencli_check)
+        open_dir_btn = QPushButton("打开扩展目录", box)
+        open_dir_btn.clicked.connect(self._opencli_ext_dir)
+        save_btn = QPushButton("保存配置", box)
+        save_btn.setProperty("primary", True)
+        save_btn.clicked.connect(self._opencli_save)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(check_btn)
+        btn_row.addWidget(open_dir_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch(1)
+
+        tip = QLabel(
+            "前置条件：① npm install -g @jackwener/opencli；"
+            "② Chrome 装 Browser Bridge 扩展（点「打开扩展目录」，"
+            "在 chrome://extensions 开启开发者模式后「加载已解压的扩展程序」）；"
+            "③ 在该 Chrome 里用小号登录目标平台。\n"
+            "满足后 OpenCLI 会复用该浏览器的登录态抓取，"
+            "与上方自研方案并存互备；未满足时该源自动跳过，不影响其它社媒源。", box)
+        tip.setWordWrap(True)
+        tip.setProperty("secondary", True)
+
+        lay = QVBoxLayout(box)
+        lay.addWidget(self.opencli_enabled)
+        lay.addWidget(tip)
+        lay.addWidget(plat_wrap)
+        lay.addWidget(self.opencli_status)
+        lay.addLayout(btn_row)
+        self._load_opencli_config()
+        return box
+
+    def _opencli_spec(self) -> dict:
+        """取 config.yaml 中 opencli 源的配置。"""
+        for spec in settings.config().get("sources", {}).get("social", []) or []:
+            if spec.get("name") == "opencli":
+                return spec
+        return {}
+
+    def _load_opencli_config(self):
+        spec = self._opencli_spec()
+        params = spec.get("params") or {}
+        self.opencli_enabled.setChecked(bool(spec.get("enabled")))
+        chosen = set(params.get("platforms") or [])
+        for key, cb in self.opencli_checks.items():
+            cb.setChecked(key in chosen)
+
+    def _opencli_save(self):
+        """把启停与平台清单写回 config.yaml。"""
+        cfg = settings.config()
+        sources = cfg.setdefault("sources", {})
+        social = sources.setdefault("social", [])
+        spec = None
+        for s in social:
+            if s.get("name") == "opencli":
+                spec = s
+                break
+        if spec is None:
+            spec = {"name": "opencli", "enabled": False, "tier": 2,
+                    "class": "providers.opencli_base.OpenCliProvider",
+                    "params": {}}
+            social.append(spec)
+        spec["enabled"] = self.opencli_enabled.isChecked()
+        params = spec.setdefault("params", {})
+        params["platforms"] = [k for k, cb in self.opencli_checks.items() if cb.isChecked()]
+        try:
+            settings.save_config()
+        except Exception as e:
+            QMessageBox.warning(self, "保存失败", str(e))
+            return
+        self.opencli_status.setText(
+            f"已保存：{'启用' if spec['enabled'] else '停用'}，"
+            f"覆盖 {len(params['platforms'])} 个平台。")
+        QMessageBox.information(self, "已保存", "OpenCLI 后端配置已写入 config.yaml。")
+
+    def _opencli_check(self):
+        """安装自检：跑 opencli doctor 并展示结果。"""
+        self.opencli_status.setText("正在自检…")
+        self.setEnabled(False)
+        self._worker = FnWorker(self._opencli_doctor, parent=self)
+        self._worker.done.connect(self._on_opencli_check_done)
+        self._worker.failed.connect(self._on_opencli_check_fail)
+        self._worker.start()
+
+    @staticmethod
+    def _opencli_doctor() -> dict:
+        from ..providers.opencli_base import OpenCliProvider
+        p = OpenCliProvider({})
+        return p.doctor()
+
+    def _on_opencli_check_done(self, result):
+        self.setEnabled(True)
+        result = result or {}
+        installed = result.get("installed")
+        connected = result.get("extension_connected")
+        issues = result.get("issues") or []
+        if not installed:
+            text = "未安装 opencli CLI。请先执行：npm install -g @jackwener/opencli"
+        elif not connected:
+            text = ("opencli 已安装，但 Chrome 扩展未连接。"
+                    "请点「打开扩展目录」加载 Browser Bridge 扩展后重试。")
+        elif issues:
+            text = "自检发现问题：\n" + "\n".join(str(i) for i in issues)
+        else:
+            text = "自检通过：opencli 已安装且浏览器扩展已连接，可以启用该后端。"
+        self.opencli_status.setText(text)
+        QMessageBox.information(self, "OpenCLI 安装自检", text)
+
+    def _on_opencli_check_fail(self, msg):
+        self.setEnabled(True)
+        self.opencli_status.setText(f"自检失败：{msg}")
+        QMessageBox.warning(self, "OpenCLI 安装自检", f"自检失败：{msg}")
+
+    def _opencli_ext_dir(self):
+        """打开扩展目录；不存在则先自动下载（第三方二进制包不入库）。"""
+        from ..providers import opencli_base as ob
+        path = ob.extension_dir()
+        if not ob.extension_installed():
+            self.opencli_status.setText("正在下载 OpenCLI 浏览器扩展…")
+            self.setEnabled(False)
+            self._worker = FnWorker(ob.download_extension, parent=self)
+            self._worker.done.connect(self._on_ext_download_done)
+            self._worker.failed.connect(self._on_ext_download_fail)
+            self._worker.start()
+            return
+        self._reveal_ext_dir(path)
+
+    def _reveal_ext_dir(self, path: str):
+        try:
+            os.startfile(path)  # noqa: S606 - Windows 打开资源管理器
+        except OSError as e:
+            QMessageBox.information(self, "扩展目录", f"{path}\n\n（{e}）")
+            return
+        QMessageBox.information(
+            self, "加载扩展",
+            f"已打开：{path}\n\n"
+            "在 Chrome 地址栏打开 chrome://extensions → 开启右上角「开发者模式」"
+            "→ 点「加载已解压的扩展程序」→ 选择上面的目录。")
+
+    def _on_ext_download_done(self, result):
+        self.setEnabled(True)
+        ok, msg = result if isinstance(result, (tuple, list)) else (False, str(result))
+        self.opencli_status.setText("扩展已下载" if ok else "扩展下载失败")
+        if not ok:
+            QMessageBox.warning(self, "扩展下载失败", msg)
+            return
+        from ..providers import opencli_base as ob
+        self._reveal_ext_dir(ob.extension_dir())
+
+    def _on_ext_download_fail(self, msg):
+        self.setEnabled(True)
+        self.opencli_status.setText("扩展下载失败")
+        QMessageBox.warning(self, "扩展下载失败", msg)
 
     # ---------- 刷新列表 ----------
     def _reload(self):
