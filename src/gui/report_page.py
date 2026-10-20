@@ -245,7 +245,6 @@ class ReportDialog(QDialog):
         self._saved_edit = self.preview.toPlainText()
         self.status_label.setText("编辑内容已保存，将用于报告正文导出。")
 
-
     # ---------- 导出 ----------
     def _export(self):
         ents, events = self._collect_events()
