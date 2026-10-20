@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
 from ..core import db, settings
 from ..core.models import CATEGORIES, CATEGORY_LABELS, Enterprise
 from ..core.paths import app_root, reports_dir
+from .hover_effect import setup_dialog_hover
+from .social_auth_page import SocialAuthWidget
 from .workers import FnWorker
 
 # ---------- 可选依赖（并行开发中，缺失时降级） ----------
@@ -167,6 +169,7 @@ class EnterpriseDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         lay.addWidget(btns)
+        setup_dialog_hover(self)
 
     def _save(self):
         name = self.name_edit.text().strip()
@@ -262,6 +265,7 @@ class PenetrationDialog(QDialog):
             self.tree.addTopLevelItem(QTreeWidgetItem(["同步/穿透模块未就绪，请稍后再试"]))
         elif enterprise:
             self._run()
+        setup_dialog_hover(self)
 
     def _run(self):
         name = self.ent_combo.currentText().strip()
@@ -407,6 +411,7 @@ class ImportDialog(QDialog):
         lay.addWidget(imp_group)
         lay.addWidget(exp_group)
         lay.addWidget(btns)
+        setup_dialog_hover(self)
 
         if sync is None:
             tip = QLabel("同步模块未就绪，导入/导出暂不可用。", self)
@@ -553,6 +558,7 @@ class MaterialDialog(QDialog):
         elif _docx is None and _PdfReader is None:
             self.tip_label.setText("提示：缺少 python-docx / pypdf，docx/pdf 文本提取不可用")
         self._reload_list()
+        setup_dialog_hover(self)
 
     def _reload_list(self):
         self.list.clear()
@@ -671,6 +677,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._frequency_tab(), "频率设置")
         self.tabs.addTab(self._monitor_tab(), "监控设置")
         self.tabs.addTab(self._sources_tab(), "数据源设置")
+        self.tabs.addTab(self._social_auth_tab(), "社媒登录态")
         self.tabs.addTab(self._ai_tab(), "AI 设置")
         self.tabs.addTab(self._report_tab(), "报告设置")
 
@@ -689,6 +696,7 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self.tabs)
         lay.addWidget(btns)
+        setup_dialog_hover(self)
 
     # ---------- ① 显示设置 ----------
     def _display_tab(self):
@@ -817,7 +825,7 @@ class SettingsDialog(QDialog):
 
         cat_labels = dict(CATEGORY_LABELS)
         sources_cfg = settings.config().get("sources", {})
-        for cat in ("news", "biz_change", "lawsuit", "enforcement"):
+        for cat in CATEGORIES:
             root = QTreeWidgetItem([cat_labels.get(cat, cat)])
             root.setFlags(root.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             self.src_tree.addTopLevelItem(root)
@@ -855,7 +863,17 @@ class SettingsDialog(QDialog):
         parent.insertChild(new_idx, item)
         self.src_tree.setCurrentItem(item)
 
-    # ---------- ⑤ AI 设置 ----------
+    # ---------- ⑤ 社媒登录态 ----------
+    def _social_auth_tab(self):
+        """内嵌社媒登录态管理（与独立窗口同一套组件）。"""
+        w = QWidget(self)
+        self.social_auth_view = SocialAuthWidget(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.social_auth_view)
+        return w
+
+    # ---------- ⑥ AI 设置 ----------
     def _ai_tab(self):
         w = QWidget(self)
         env = _read_env()
