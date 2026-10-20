@@ -31,6 +31,7 @@ from ..core.models import CATEGORY_LABELS
 from ..core.paths import reports_dir
 from ..report.docx_builder import build_report
 from .dialogs import CHAPTERS
+from .hover_effect import setup_dialog_hover
 from .workers import FnWorker
 
 try:
@@ -153,6 +154,7 @@ class ReportDialog(QDialog):
         if agents is None:
             self.preview_btn.setEnabled(False)
             self.status_label.setText("AI 模块未就绪：预览与 AI 章节将使用本地脚本文本。")
+        setup_dialog_hover(self)
 
     # ---------- 交互 ----------
     def _browse_dir(self):
@@ -242,6 +244,7 @@ class ReportDialog(QDialog):
     def _save_edit(self):
         self._saved_edit = self.preview.toPlainText()
         self.status_label.setText("编辑内容已保存，将用于报告正文导出。")
+
 
     # ---------- 导出 ----------
     def _export(self):
