@@ -1,5 +1,8 @@
 .env
 data/
+# 社媒登录态凭据与专用浏览器配置（含真实 Cookie，绝不入库）
+social_auth.yaml
+data/browser_profile/
 build/
 dist/
 dist_qa_verify/
