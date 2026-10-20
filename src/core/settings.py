@@ -241,6 +241,16 @@ network:
   max_per_host_rps: 1        # 限流：每主机每秒最大请求数
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36
 
+# 渲染后端：公开站点默认走 Obscura 轻量无头引擎（自动拉起，无需手动开浏览器）；
+# 需登录的社媒仍走 Chrome。backend=auto/obscura/chrome
+browser:
+  backend: auto
+  obscura_path: ""            # 留空自动查找 tools/obscura/obscura.exe，或 PATH 中的 obscura
+  obscura_port: 9223
+  obscura_stealth: true
+  chrome_port: 9222
+  settle_ms: 3000
+
 ui:
   map_mode: severity   # severity=按严重度着色 / category=按信息类型着色
 """

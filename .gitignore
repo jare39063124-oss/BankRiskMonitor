@@ -5,6 +5,8 @@ social_auth.yaml
 data/browser_profile/
 # OpenCLI 浏览器扩展（第三方二进制包，运行时按需自动下载）
 tools/opencli_ext/
+# Obscura 无头渲染引擎（第三方二进制包，约 70MB，运行时按需自动下载）
+tools/obscura/
 build/
 dist/
 dist_qa_verify/

@@ -132,6 +132,18 @@ sources:
       tier: 3            # 尽力而为：裁判文书网反爬强
       class: providers.court_wenshu.WenshuProvider
       params: {}
+    # 人民法院公告网（最高法主办）——涉诉/执行公告的**可靠源**：
+    #   纯 HTTP 打接口恒定 iTotalRecords=0（服务端按来源过滤），URL 的 searchContent
+    #   参数也被忽略，必须走「真实渲染 + 页面内点搜索按钮」，已实测可拿到真实公告。
+    #   走 Obscura 轻量无头引擎（config 的 browser 段），无需用户手动开浏览器。
+    #   同时产出 enforcement（执行文书、拍卖）事件，故只在 lawsuit 下登记一次，避免重复采集。
+    - name: rmfygg
+      enabled: true
+      tier: 1            # 确定可用：官方公开源 + 已验证渲染通路
+      class: providers.court_rmfygg.RmfyggProvider
+      params:
+        settle_ms: 3000          # 搜索后等待异步回填毫秒
+        timeout_seconds: 30      # 单次页面会话超时（首次启动引擎会慢一点）
     - name: commercial_api
       enabled: false
       tier: 2
@@ -149,6 +161,15 @@ sources:
       tier: 3            # 尽力而为：执行信息公开网有验证码
       class: providers.court_zxgk.ZxgkProvider
       params: {}
+    # 人民法院公告网的「执行文书、拍卖」公告 → 被执行/处置线索（可靠源，tier 1）。
+    # 与 lawsuit 下同一适配器共用一次页面搜索结果（适配器内置短时记忆），不会重复开页面。
+    - name: rmfygg
+      enabled: true
+      tier: 1
+      class: providers.court_rmfygg.RmfyggProvider
+      params:
+        settle_ms: 3000
+        timeout_seconds: 30
     - name: credit_china
       enabled: true      # 本轮新增（R2）：行政处罚/失信/重大税收违法失信
       tier: 3            # 尽力而为：公开政务源，端点运行时核实
@@ -241,6 +262,19 @@ network:
   timeout_seconds: 15
   max_per_host_rps: 1        # 限流：每主机每秒最大请求数
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36
+
+# 渲染后端：公开站点（法院公告网等）默认走 Obscura 轻量无头引擎，
+# 不再需要用户手动开 Chrome；需登录的社媒仍走 Chrome（无头引擎无法扫码登录）。
+#   backend=auto      优先 Obscura，缺失/启动失败才回退已运行的 Chrome（推荐）
+#   backend=obscura   只用 Obscura（缺失直接报错，便于排查）
+#   backend=chrome    只用 Chrome/Edge（沿用旧行为）
+browser:
+  backend: auto
+  obscura_path: ""            # 留空自动查找 tools/obscura/obscura.exe，或 PATH 中的 obscura
+  obscura_port: 9223          # 与 Chrome 的 9222 分开，两个后端可同时运行
+  obscura_stealth: true       # 开启反检测（指纹一致 + TLS 伪装），公开站点更稳
+  chrome_port: 9222
+  settle_ms: 3000             # 页面渲染后额外等待毫秒（异步接口回填）
 
 ui:
   map_mode: severity   # severity=按严重度着色 / category=按信息类型着色

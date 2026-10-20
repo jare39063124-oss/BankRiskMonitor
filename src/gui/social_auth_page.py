@@ -4,7 +4,9 @@
 登录态长期保留在本机（专用浏览器配置目录），程序按需读取并驱动浏览器抓取。
 
 另含 **OpenCLI 后端**配置：复用已登录 Chrome 做跨平台采集，
-提供安装自检、平台清单勾选与启停开关。
+提供安装自检、平台清单勾选与启停开关；
+以及 **公开站点渲染后端**配置：法院公告网等无需登录的站点
+默认走 Obscura 轻量无头引擎（自动拉起、无窗口），可切回 Chrome。
 
 提供两种用法：
 - ``SocialAuthWidget``：可嵌入设置中心页签；
@@ -15,6 +17,7 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QGroupBox,
     QHBoxLayout,
@@ -28,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core import settings, social_auth
+from ..core import cdp, settings, social_auth
 from .hover_effect import setup_dialog_hover
 from .workers import FnWorker
 
@@ -122,8 +125,113 @@ class SocialAuthWidget(QWidget):
         lay.addWidget(self.status_label)
         lay.addLayout(btns)
         lay.addWidget(self._build_opencli_box())
+        lay.addWidget(self._build_backend_box())
         self._reload()
         setup_dialog_hover(self)
+
+    # ---------- 公开站点渲染后端 ----------
+    def _build_backend_box(self) -> QWidget:
+        """公开站点渲染后端：Obscura 轻量无头引擎 / Chrome，可切换并一键自检启动。"""
+        box = QGroupBox("公开站点渲染后端（法院公告网等无需登录的站点）", self)
+        self.backend_combo = QComboBox(box)
+        for key in (cdp.BACKEND_AUTO, cdp.BACKEND_OBSCURA, cdp.BACKEND_CHROME):
+            self.backend_combo.addItem(cdp.BACKEND_LABELS[key], key)
+        self.backend_status = QLabel("", box)
+        self.backend_status.setProperty("secondary", True)
+        self.backend_status.setWordWrap(True)
+
+        check_btn = QPushButton("自检并启动", box)
+        check_btn.clicked.connect(self._backend_check)
+        save_btn = QPushButton("保存配置", box)
+        save_btn.setProperty("primary", True)
+        save_btn.clicked.connect(self._backend_save)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(QLabel("后端：", box))
+        btn_row.addWidget(self.backend_combo)
+        btn_row.addWidget(check_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch(1)
+
+        tip = QLabel(
+            "公开站点（法院公告网、政务源）默认用 Obscura 轻量无头引擎渲染："
+            "内存约 30MB、无窗口、程序按需自动拉起，不再需要手动开 Chrome。\n"
+            "需登录的社媒（抖音/快手/小红书/微博）仍走上面的 Chrome —— "
+            "无头引擎无法扫码登录，登录态只存在于 Chrome 里。", box)
+        tip.setWordWrap(True)
+        tip.setProperty("secondary", True)
+
+        lay = QVBoxLayout(box)
+        lay.addWidget(tip)
+        lay.addLayout(btn_row)
+        lay.addWidget(self.backend_status)
+        self._load_backend_config()
+        return box
+
+    def _load_backend_config(self):
+        """按 config.yaml 的 browser.backend 设置下拉项，并展示当前可用性。"""
+        current = cdp.configured_backend()
+        idx = self.backend_combo.findData(current)
+        if idx >= 0:
+            self.backend_combo.setCurrentIndex(idx)
+        self._refresh_backend_status()
+
+    def _refresh_backend_status(self):
+        st = cdp.backend_status()
+        obscura = "已就绪" if st["obscura_available"] else "未找到可执行文件"
+        self.backend_status.setText(
+            f"Obscura：{obscura}（{'运行中' if st['obscura_running'] else '未运行'}，"
+            f"端口 {st['obscura_port']}）；"
+            f"Chrome：{'运行中' if st['chrome_running'] else '未运行'}，"
+            f"端口 {st['chrome_port']}")
+
+    def _backend_save(self):
+        """把后端选择写回 config.yaml。"""
+        cfg = settings.config()
+        browser = cfg.setdefault("browser", {})
+        browser["backend"] = self.backend_combo.currentData()
+        try:
+            settings.save_config()
+        except Exception as e:
+            QMessageBox.warning(self, "保存失败", str(e))
+            return
+        self._refresh_backend_status()
+        QMessageBox.information(
+            self, "已保存",
+            f"渲染后端已设为「{cdp.BACKEND_LABELS[browser['backend']]}」。")
+
+    def _backend_check(self):
+        """自检：缺引擎先按需下载（约 70MB），再启动后端并报告端口。"""
+        self.backend_status.setText("正在自检（首次可能需要下载渲染引擎）…")
+        self.setEnabled(False)
+        self._worker = FnWorker(self._prepare_backend, parent=self)
+        self._worker.done.connect(self._on_backend_check_done)
+        self._worker.failed.connect(self._on_backend_check_fail)
+        self._worker.start()
+
+    @staticmethod
+    def _prepare_backend() -> int:
+        """确保 Obscura 就绪（缺失则下载），再返回可用的调试端口。"""
+        ok, msg = cdp.ensure_obscura_installed()
+        if not ok:
+            raise RuntimeError(msg)
+        return cdp.ensure_backend()
+
+    def _on_backend_check_done(self, port):
+        self.setEnabled(True)
+        self._refresh_backend_status()
+        QMessageBox.information(
+            self, "渲染后端自检",
+            f"后端可用，调试端口 {port}。法院公告网等公开站点可直接采集。")
+
+    def _on_backend_check_fail(self, msg):
+        self.setEnabled(True)
+        self._refresh_backend_status()
+        QMessageBox.warning(
+            self, "渲染后端自检",
+            f"未找到可用的渲染后端：{msg}\n\n"
+            "可把后端切为「自动」后重试（会自动拉起 Obscura），"
+            "或点上方「启动登录浏览器」后改用 Chrome。")
 
     # ---------- OpenCLI 后端 ----------
     def _build_opencli_box(self) -> QWidget:

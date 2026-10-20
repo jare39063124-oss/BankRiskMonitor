@@ -87,14 +87,30 @@ def test_check_returns_problems_and_message():
 
 
 def test_real_config_declares_required_coverage_and_reports_gap():
-    """真实配置必须声明必备域，且当前状态下涉诉/被执行应被判为需要提示。"""
+    """真实配置必须声明必备域；且涉诉/被执行已有 tier 1 可靠源，不应再被提示。"""
     from src.core import settings
     cfg = settings.config()
     assert isinstance(cfg.get("required_coverage"), list) and cfg["required_coverage"]
     cats = {i["category"] for i in cov.required_coverage(cfg)}
     assert {"lawsuit", "enforcement"} <= cats
+    # 人民法院公告网（rmfygg，tier 1）同时登记在 lawsuit / enforcement 下，
+    # 两个必备域都有可靠源 → 当前配置下不应再提示缺源
     probs = cov.check_required_coverage(cfg)
-    # 当前只有反爬源 → 两个域都应被提示
+    assert {p["category"] for p in probs} == set()
+
+
+def test_required_coverage_reports_gap_when_reliable_source_disabled():
+    """把可靠源停用后，必备域必须重新被提示（防止「静默缺源」）。"""
+    from src.core import settings
+    cfg = settings.config()
+    stripped = {
+        "required_coverage": cfg.get("required_coverage"),
+        "sources": {
+            "lawsuit": [s for s in cfg["sources"]["lawsuit"] if s.get("tier") != 1],
+            "enforcement": [s for s in cfg["sources"]["enforcement"] if s.get("tier") != 1],
+        },
+    }
+    probs = cov.check_required_coverage(stripped)
     assert {p["category"] for p in probs} == {"lawsuit", "enforcement"}
 
 

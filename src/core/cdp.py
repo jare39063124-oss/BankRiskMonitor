@@ -11,8 +11,10 @@
 仅依赖标准库（socket/base64/hashlib/json），不引入 websocket-client。
 """
 import base64
+import glob
 import json
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -309,6 +311,30 @@ class PageSession:
             "expression": expression, "returnByValue": True}, sid))
         return str((res.get("result") or {}).get("value") or "")
 
+    def evaluate(self, expression: str) -> str:
+        """在当前页面执行 JS 表达式并返回字符串化结果（供子类/Provider 复用）。"""
+        return self._evaluate(expression, self._session_id)
+
+    def html(self) -> str:
+        """返回当前页面**渲染后**的完整 HTML（含 JS 异步回填的内容）。"""
+        return self.evaluate("document.documentElement.outerHTML")
+
+    def wait_until(self, expression: str, timeout: float = 10.0,
+                   interval: float = 0.3) -> bool:
+        """轮询 JS 表达式直至返回真值；超时返回 False（不抛异常）。
+
+        用于等待前端异步渲染/接口回填完成（例如 DataTables 的数据行出现）。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if self.evaluate(f"!!({expression})") == "True":
+                    return True
+            except RuntimeError:
+                break
+            time.sleep(interval)
+        return False
+
     def close(self):
         try:
             if self._target_id:
@@ -336,7 +362,236 @@ def fetch_rendered(url: str, port: int = DEFAULT_PORT, settle_ms: int = 2500,
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# 浏览器后端：Obscura（轻量 AI-agent 无头引擎）/ Chrome（含社媒登录态）
+# ---------------------------------------------------------------------------
+# 背景：Obscura 是 Rust 写的 AI-agent 专用无头浏览器（内存约 30MB，Chrome 200MB+），
+# 暴露与 Chrome 完全相同的 CDP 协议，因此本模块的 PageSession 可直接驱动它。
+# 采集**公开站点**（法院公告网、政务源等）用 Obscura：无窗口、自动拉起、零打扰；
+# 采集**需登录社媒**仍用 Chrome：Obscura 是无头引擎，无法交互扫码登录。
+#
+# 注意（实测结论）：Obscura 不会跟随 http→https 跳转，公开站点务必直接用 https 地址，
+# 否则页面处于 http 源、其异步接口走 https 会被判为跨源而取不到数据。
+
+BACKEND_AUTO = "auto"
+BACKEND_OBSCURA = "obscura"
+BACKEND_CHROME = "chrome"
+
+# 两个后端分开占用端口，可同时运行互不干扰
+CHROME_PORT = 9222
+OBSCURA_PORT = 9223
+
+# Obscura 发布页（第三方二进制包，不入库，首次使用时按需下载）
+OBSCURA_RELEASE_API = "https://api.github.com/repos/h4ckf0r0day/obscura/releases/latest"
+
+BACKEND_LABELS = {
+    BACKEND_AUTO: "自动（优先 Obscura）",
+    BACKEND_OBSCURA: "Obscura（轻量无头引擎）",
+    BACKEND_CHROME: "Chrome/Edge（含登录态）",
+}
+
+
+def browser_conf() -> dict:
+    """读取 config.yaml 的 browser 段（缺失时返回空 dict，绝不抛异常）。"""
+    try:
+        from . import settings
+        conf = settings.config().get("browser") or {}
+    except Exception:
+        conf = {}
+    return conf if isinstance(conf, dict) else {}
+
+
+def configured_backend() -> str:
+    """配置里的后端选择（auto/obscura/chrome），非法值按 auto 处理。"""
+    val = str(browser_conf().get("backend") or BACKEND_AUTO).strip().lower()
+    return val if val in BACKEND_LABELS else BACKEND_AUTO
+
+
+def obscura_path() -> str:
+    """定位 obscura 可执行文件：优先项目 tools/obscura，其次 PATH；找不到返回空串。"""
+    conf = browser_conf()
+    custom = str(conf.get("obscura_path") or "").strip()
+    if custom and os.path.exists(custom):
+        return custom
+    base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for rel in ("obscura.exe", "obscura"):
+        flat = os.path.join(base, "tools", "obscura", rel)
+        if os.path.exists(flat):
+            return flat
+        # 兼容 zip 自带一层子目录的解压布局
+        nested = sorted(glob.glob(os.path.join(base, "tools", "obscura", "*", rel)))
+        if nested:
+            return nested[0]
+    return shutil.which("obscura") or ""
+
+
+def obscura_available() -> bool:
+    return bool(obscura_path())
+
+
+def download_obscura(timeout: float = 600.0) -> tuple:
+    """下载并解压 obscura 无头引擎到 ``tools/obscura``，返回 ``(ok, message)``。
+
+    引擎是第三方二进制包（约 70MB，不入库），首次使用时按需拉取——与 OpenCLI
+    浏览器扩展同一策略。已存在时直接返回成功，不重复下载。
+    """
+    import json as _json
+    import platform as _platform
+    import urllib.request
+    import zipfile
+
+    existing = obscura_path()
+    if existing:
+        return True, f"obscura 已就绪：{existing}"
+    if os.environ.get("OBSCURA_DOWNLOAD_DISABLED"):
+        return False, "已禁用自动下载（OBSCURA_DOWNLOAD_DISABLED）"
+
+    target = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "tools", "obscura")
+    try:
+        req = urllib.request.Request(OBSCURA_RELEASE_API,
+                                     headers={"User-Agent": "BankRiskMonitor"})
+        with urllib.request.urlopen(req, timeout=min(timeout, 60.0)) as resp:
+            release = _json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception as e:
+        return False, (f"获取 obscura 版本失败：{e}。"
+                       "可手动下载 release 包解压到 tools/obscura/ 后重试")
+
+    plat = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+    arch = "aarch64" if _platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
+    assets = [a for a in (release.get("assets") or [])
+              if str(a.get("name", "")).lower().endswith(".zip")]
+    picked = next((a for a in assets if plat in a["name"] and arch in a["name"]
+                   and "stealth" in a["name"]), None)
+    if picked is None:
+        picked = next((a for a in assets if plat in a["name"] and arch in a["name"]), None)
+    if picked is None:
+        names = "、".join(str(a.get("name")) for a in assets) or "（无 zip 资产）"
+        return False, f"发布页未找到匹配 {plat}/{arch} 的包：{names}"
+
+    tmp = os.path.join(os.path.dirname(target), "_obscura.zip")
+    try:
+        os.makedirs(target, exist_ok=True)
+        req = urllib.request.Request(picked["browser_download_url"],
+                                     headers={"User-Agent": "BankRiskMonitor"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as f:
+            shutil.copyfileobj(resp, f)
+        with zipfile.ZipFile(tmp) as zf:
+            zf.extractall(target)
+    except Exception as e:
+        return False, f"下载/解压 obscura 失败：{e}"
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+    found = obscura_path()
+    if not found:
+        return False, f"已解压到 {target}，但未找到 obscura 可执行文件，请检查压缩包内容"
+    return True, f"obscura 已下载：{found}"
+
+
+def ensure_obscura_installed(timeout: float = 600.0) -> tuple:
+    """确保 obscura 可执行文件存在（缺失则按需下载），返回 ``(ok, message)``。"""
+    existing = obscura_path()
+    if existing:
+        return True, existing
+    return download_obscura(timeout=timeout)
+
+
+def launch_obscura(port: int = OBSCURA_PORT, stealth: bool = True) -> tuple:
+    """后台启动 obscura 的 CDP 服务（无窗口，无需登录态），返回 ``(ok, message)``。"""
+    exe = obscura_path()
+    if not exe:
+        return False, ("未找到 obscura 无头引擎（期望 tools/obscura/obscura.exe）。"
+                       "可在「设置 → 社媒登录态 → 公开站点渲染后端」点「自检并启动」"
+                       "自动下载，或在 config.yaml 的 browser.obscura_path 指定路径")
+    args = [exe, "serve", "--port", str(port), "--quiet"]
+    if stealth:
+        args.append("--stealth")
+    try:
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError as e:
+        return False, f"启动 obscura 失败：{e}"
+    return True, f"已启动 Obscura 无头引擎（端口 {port}）"
+
+
+def _wait_debug_port(port: int, seconds: float) -> bool:
+    """轮询等待调试端口就绪（Obscura 首次启动需初始化 V8，通常 1-3 秒）。"""
+    deadline = time.time() + max(0.0, seconds)
+    while time.time() < deadline:
+        if is_debug_port_open(port, timeout=0.5):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def ensure_backend(wait_seconds: float = 10.0) -> int:
+    """确保存在可用的公开站点抓取后端，返回其调试端口。
+
+    顺序：配置的后端已在运行 → 自动拉起 Obscura（无头，静默）→ 回退已运行的 Chrome。
+    Chrome **不会自动拉起**（带窗口，属于用户操作，由「设置 → 社媒登录态」负责）。
+    全都不可用时抛 ``RuntimeError``（含可读原因，绝不静默返回坏端口）。
+    """
+    conf = browser_conf()
+    backend = configured_backend()
+    o_port = int(conf.get("obscura_port") or OBSCURA_PORT)
+    c_port = int(conf.get("chrome_port") or CHROME_PORT)
+    problems = []
+
+    if backend in (BACKEND_AUTO, BACKEND_OBSCURA):
+        if is_debug_port_open(o_port):
+            return o_port
+        ok, msg = launch_obscura(o_port, stealth=bool(conf.get("obscura_stealth", True)))
+        if ok and _wait_debug_port(o_port, wait_seconds):
+            return o_port
+        problems.append(msg if not ok else f"Obscura 启动后端口 {o_port} 未就绪")
+        if backend == BACKEND_OBSCURA:
+            raise RuntimeError("；".join(problems))
+
+    if is_debug_port_open(c_port):
+        return c_port
+    problems.append(f"Chrome 调试端口 {c_port} 未开启（可在「设置 → 社媒登录态」一键启动）")
+    raise RuntimeError("；".join(problems))
+
+
+def public_session(timeout: float = 25.0) -> "PageSession":
+    """打开一个面向**公开站点**的页面会话（自动确保后端就绪）。"""
+    port = ensure_backend()
+    version = _http_json(f"http://127.0.0.1:{port}/json/version", timeout=timeout)
+    ws_url = version.get("webSocketDebuggerUrl")
+    if not ws_url:
+        raise RuntimeError("浏览器未提供 CDP 调试地址")
+    return PageSession(ws_url, timeout=timeout)
+
+
+def fetch_public(url: str, settle_ms: int = 2500, timeout: float = 25.0) -> str:
+    """用配置后端抓取公开页面渲染后的 HTML（自动拉起 Obscura，无需用户开浏览器）。"""
+    return fetch_rendered(url, port=ensure_backend(), settle_ms=settle_ms, timeout=timeout)
+
+
+def backend_status() -> dict:
+    """后端可用性摘要，供 GUI 展示与自检。"""
+    conf = browser_conf()
+    o_port = int(conf.get("obscura_port") or OBSCURA_PORT)
+    c_port = int(conf.get("chrome_port") or CHROME_PORT)
+    return {
+        "backend": configured_backend(),
+        "backend_label": BACKEND_LABELS[configured_backend()],
+        "obscura_path": obscura_path(),
+        "obscura_available": obscura_available(),
+        "obscura_port": o_port,
+        "obscura_running": is_debug_port_open(o_port),
+        "chrome_path": find_browser(),
+        "chrome_port": c_port,
+        "chrome_running": is_debug_port_open(c_port),
+    }
+
+
 if __name__ == "__main__":  # 自检：python -m src.core.cdp
+
     port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
     if not is_debug_port_open(port):
         print(f"端口 {port} 未开启")
