@@ -3,6 +3,8 @@ data/
 # 社媒登录态凭据与专用浏览器配置（含真实 Cookie，绝不入库）
 social_auth.yaml
 data/browser_profile/
+# OpenCLI 浏览器扩展（第三方二进制包，运行时按需自动下载）
+tools/opencli_ext/
 build/
 dist/
 dist_qa_verify/
