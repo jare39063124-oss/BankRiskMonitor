@@ -167,12 +167,18 @@ sources:
         secret_key: ""    # 企查查=SecretKey（账号安全页获取）
         vendor: tianyancha
   social:
+    # 社媒源统一策略（spec §ADDED 需求1/2）：
+    #   requires_auth=true  →  未配置登录态时**跳过且不发请求**（按需访问）
+    #   登录态来源优先级：params.cookie（此处） > social_auth.yaml（设置中心写入）
+    #   settle_ms           →  浏览器渲染后的额外等待毫秒（结果异步回填，越大越慢越全）
     - name: weibo
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_weibo.WeiboProvider
       params:
-        cookie: ""     # 登录态 Cookie，留空则不加 Cookie 头（未登录可见性有限）
+        cookie: ""     # 登录态 Cookie，留空则读 social_auth.yaml
+        settle_ms: 2500
     - name: wechat_sogou
       enabled: true
       tier: 3
@@ -182,21 +188,27 @@ sources:
     - name: douyin
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_douyin.DouyinProvider
       params:
         cookie: ""
+        settle_ms: 4000
     - name: kuaishou
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_kuaishou.KuaishouProvider
       params:
         cookie: ""
+        settle_ms: 4000
     - name: xiaohongshu
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_xiaohongshu.XiaohongshuProvider
       params:
         cookie: ""
+        settle_ms: 4000
 
 network:
   timeout_seconds: 15
