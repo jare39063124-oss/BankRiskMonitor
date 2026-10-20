@@ -17,8 +17,7 @@ except ImportError:
 
 SEARCH_URL = "https://www.xiaohongshu.com/search_result"
 _ANTI_MARKS = ("captcha", "验证码", "环境异常", "安全验证")
-# 候选数据块标记：小红书改版频繁，逐个
-试探
+# 候选数据块标记：小红书改版频繁，逐个试探
 _MARKERS = ("__INITIAL_STATE__", "window.__INITIAL_STATE__", "RENDER_DATA")
 
 
