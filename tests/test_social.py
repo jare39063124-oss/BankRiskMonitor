@@ -269,11 +269,14 @@ class FallbackTest(unittest.TestCase):
         self.assertEqual(events[0].category, "social")
 
     def test_config_declares_five_social_sources(self):
-        """config.yaml social 段五源声明顺序与类路径可加载。"""
+        """config.yaml social 段：五个原有社媒源 + 可选的 opencli 后端。"""
         from src.providers import base as pbase
         ps = pbase.load_providers("social")
-        self.assertEqual([p.name for p in ps],
-                         ["weibo", "wechat_sogou", "douyin", "kuaishou", "xiaohongshu"])
+        names = [p.name for p in ps]
+        for expected in ("weibo", "wechat_sogou", "douyin", "kuaishou", "xiaohongshu"):
+            self.assertIn(expected, names)
+        # opencli 后端默认关闭，不应出现在已启用源里
+        self.assertNotIn("opencli", names)
         self.assertTrue(all(p.category == "social" for p in ps))
 
 
