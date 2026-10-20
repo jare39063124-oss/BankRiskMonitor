@@ -523,7 +523,7 @@ QListWidget::item:selected {{
 }}
 QListWidget::item:selected:!active {{
     background: {PRIMARY_BG};
-    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY};
+    color: {PRIMARY};
 }}
 
 /* 风险色标 / 事件数徽标（QLabel 按 badge 属性着色） */
