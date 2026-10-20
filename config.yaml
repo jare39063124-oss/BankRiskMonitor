@@ -82,6 +82,32 @@ sources:
         # ApiZero（极数本源）企业工商查询：无需 Key 匿名即可用（5 次/日、1 QPS）
         # 填 api_key 后提升为 10 次/日（header Bearer + params key 双通道）
         api_key: ""
+    # Tavily 搜索（tavily.com，免费额度）—— 工商信息的**跨域补充源**：
+    #   实测结论（两个主体 × 多组 query）：
+    #     ① query 只写企业全名（不加「工商变更/被执行」等关键词）精度最高；
+    #        加关键词后 Tavily 语义排序会偏向关键词页面，命中该企业的结果反而降到 0。
+    #     ② include_domains 限定到工商平台（qcc/天眼查/爱企查/公示网）可稳定拿到
+    #        该企业的档案页；限定到法院域名则拿不到结果（索引覆盖有限）。
+    #   因此本条目只登记在 biz_change，涉诉/被执行交给 rmfygg（tier 1、免 Key、无限次）。
+    #   api_key 走 ${TAVILY_API_KEY} 间接引用（真实密钥放 .env，config.yaml 不入库）；
+    #   .env 未配时该源自动跳过，不影响其它源。
+    - name: tavily
+      enabled: true
+      tier: 2            # 条件可用：需 Key（免费额度，advanced 深度约 2 积分/次）
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: biz_change
+        query: '"{name}"'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - qcc.com
+          - tianyancha.com
+          - aiqicha.baidu.com
+          - gsxt.gov.cn
+          - creditchina.gov.cn
     - name: tianapi
       enabled: false     # 条件可用（付费/赠豆）：默认关闭，仅留 Key 位
       tier: 2
@@ -144,6 +170,23 @@ sources:
       params:
         settle_ms: 3000          # 搜索后等待异步回填毫秒
         timeout_seconds: 30      # 单次页面会话超时（首次启动引擎会慢一点）
+    # Tavily 涉诉检索：默认关闭（实测法院域定向检索拿不到结果，见 biz_change 段的实测结论）。
+    #   涉诉请走 rmfygg（tier 1、免 Key、无限次）；需要时把下面 enabled 改 true 试。
+    - name: tavily
+      enabled: false
+      tier: 2
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: lawsuit
+        query: '"{name}" 裁判文书'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - wenshu.court.gov.cn
+          - chinacourt.org
+          - court.gov.cn
     - name: commercial_api
       enabled: false
       tier: 2
@@ -170,6 +213,22 @@ sources:
       params:
         settle_ms: 3000
         timeout_seconds: 30
+    # Tavily 被执行检索：默认关闭（同涉诉，实测法院域定向检索无结果）。被执行走 rmfygg。
+    - name: tavily
+      enabled: false
+      tier: 2
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: enforcement
+        query: '"{name}" 被执行人'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - zxgk.court.gov.cn
+          - creditchina.gov.cn
+          - court.gov.cn
     - name: credit_china
       enabled: true      # 本轮新增（R2）：行政处罚/失信/重大税收违法失信
       tier: 3            # 尽力而为：公开政务源，端点运行时核实

@@ -71,9 +71,18 @@ def _resolve_tier(spec: dict) -> int:
 
 
 def _has_credentials(spec: dict) -> bool:
-    """条件可用（tier 2）的源，是否已配置至少一项凭据。"""
+    """条件可用（tier 2）的源，是否已配置至少一项凭据。
+
+    凭据支持 ``${VAR}`` 间接引用（真实密钥放 .env）：占位符需能在环境变量里
+    取到值才算「已配置」，避免 .env 未填时报出「可用」的假象。
+    """
     params = spec.get("params") or {}
-    return any(str(params.get(k) or "").strip() for k in _KEY_PARAMS)
+    try:
+        from . import settings as _settings
+        expand = _settings.expand_env
+    except Exception:  # noqa: BLE001
+        expand = lambda v: v  # noqa: E731
+    return any(str(expand(params.get(k)) or "").strip() for k in _KEY_PARAMS)
 
 
 def _is_reliable(spec: dict) -> bool:

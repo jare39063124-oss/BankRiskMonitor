@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.providers.biz_apizero import parse_events  # noqa: E402
+from src.providers.biz_apizero import parse_events, pick_record  # noqa: E402
 
 SAMPLE = {
     "name": "测试集团有限公司",
@@ -69,3 +69,50 @@ def test_parse_history_names_alias_forms():
         s = dict(SAMPLE, history_names=history)
         events = parse_events(s, "测试集团有限公司")
         assert "旧名A" in events[0].summary
+
+
+def test_pick_record_exact_wins():
+    """全名精确命中优先于曾用名与核心词匹配。"""
+    items = [
+        {"name": "武汉鑫泰商业管理有限公司", "reg_status": "存续"},
+        {"name": "其他公司", "history_names": ["武汉鑫泰商业管理有限公司"]},
+    ]
+    hit, how = pick_record(items, "武汉鑫泰商业管理有限公司")
+    assert how == "exact"
+    assert hit["reg_status"] == "存续"
+
+
+def test_pick_record_matches_former_name():
+    """名称已变更：记录名与监控企业名不同，但曾用名命中 -> 属名称变更信号。"""
+    items = [{"name": "武汉鑫泰实业有限公司",
+              "history_names": ["武汉鑫泰商业管理有限公司"],
+              "reg_status": "存续"}]
+    hit, how = pick_record(items, "武汉鑫泰商业管理有限公司")
+    assert how == "history"
+    assert hit["name"] == "武汉鑫泰实业有限公司"
+    events = parse_events(hit, "武汉鑫泰商业管理有限公司", how)
+    assert events[0].relevance == "high"
+    assert "曾用名匹配" in events[0].summary
+
+
+def test_pick_record_core_name_fallback():
+    """名称写法有前缀差异时回落到核心词匹配，并降级为 medium + 人工核对提示。"""
+    items = [{"name": "辽宁省鑫泰房地产开发有限公司", "reg_status": "存续"}]
+    hit, how = pick_record(items, "鑫泰房地产开发有限公司")
+    assert how == "core"
+    events = parse_events(hit, "鑫泰房地产开发有限公司", how)
+    assert events[0].relevance == "medium"
+    assert "人工核对" in events[0].summary
+
+
+def test_pick_record_short_core_name_not_matched():
+    """核心词过短（<4 字）不做包含匹配，避免泛词误命中。"""
+    items = [{"name": "北京鑫泰商业管理有限公司", "reg_status": "存续"}]
+    hit, how = pick_record(items, "鑫泰有限公司")
+    assert hit is None and how == ""
+
+
+def test_pick_record_skips_non_dict_and_no_match():
+    assert pick_record(["not-a-dict"], "某企业") == (None, "")
+    assert pick_record([{"name": "完全无关企业", "reg_status": "存续"}],
+                       "武汉鑫泰商业管理有限公司") == (None, "")

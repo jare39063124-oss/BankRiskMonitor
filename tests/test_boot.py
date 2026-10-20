@@ -38,8 +38,11 @@ class EnsureBootFilesTest(unittest.TestCase):
             self.assertIn(key, cfg["sources"])
         # model_policy.yaml 含默认 fallback_models
         self.assertTrue(pol["fallback_models"])
-        # .env 为空模板：仅键名占位，值非真实 key
-        self.assertEqual(env_text, "OPENROUTER_API_KEY=\n")
+        # .env 为空模板：仅键名占位，任何键的值都为空（不含真实 key）
+        for line in env_text.strip().splitlines():
+            self.assertIn("=", line)
+            self.assertEqual(line.split("=", 1)[1], "")
+        self.assertIn("OPENROUTER_API_KEY=", env_text)
         # 重复调用：文件已存在，不再生成任何文件
         self.assertEqual(settings.ensure_boot_files(target_dir=root), [])
 

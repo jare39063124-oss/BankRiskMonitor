@@ -9,16 +9,26 @@
 
 归一化：登记状态异常（注销/吊销/经营异常等）记高危，正常登记记 low（重复
 标题由库表唯一键去重，状态变化会产生新标题从而入库形成"变更"轨迹）。
-精确匹配：取返回列表中 name == 企业全名 的记录，匹配不到抛 RuntimeError
-（由 run_with_fallback 自动切换下一源）。
+
+记录匹配（pick_record，三级回退）：
+1. exact —— name == 企业全名；
+2. history —— 记录字段 history_names（曾用名）里含企业全名，说明该主体曾用此名，
+   本身就是一条**工商名称变更**信号；
+3. core —— 名称核心词包含（去掉省市区前缀与组织形式后缀，核心词 >= 4 字）。
+   核心词匹配可能命中同名异地企业，因此事件 relevance 降为 medium 并在摘要里
+   标注「请人工核对」，避免整源因名称写法差异而失效。
+三级都匹配不到才抛 RuntimeError（由 run_with_fallback 自动切换下一源）。
 """
+import re
 from datetime import date
 
 try:
     from src.core.models import Event, Enterprise
+    from src.core.relevance import core_name
     from src.providers.base import ProviderBase
 except ImportError:
     from ..core.models import Event, Enterprise
+    from ..core.relevance import core_name
     from .base import ProviderBase
 
 API_URL = "https://v1.apizero.cn/api/company-search"
@@ -33,8 +43,60 @@ def _s(v) -> str:
     return str(v).strip()
 
 
-def parse_events(item: dict, ent_name: str) -> list:
-    """把 ApiZero 返回的单条企业记录归一化为工商事件（纯函数，便于单测）。"""
+def history_names(item: dict) -> list:
+    """取出记录的曾用名列表（兼容 dict 列表 / 字符串列表 / 单个分隔字符串）。"""
+    value = (item or {}).get("history_names")
+    out = []
+    if isinstance(value, (list, tuple)):
+        for h in value:
+            v = _s(h.get("name") if isinstance(h, dict) else h)
+            if v:
+                out.append(v)
+    else:
+        v = _s(value)
+        if v:
+            out.extend([x for x in re.split(r"[、,，;；|/\s]+", v) if x])
+    return out
+
+
+def pick_record(items: list, ent_name: str):
+    """从搜索结果里挑出监控企业对应的记录，返回 ``(record, how)``。
+
+    how：``exact`` 全名精确 / ``history`` 曾用名命中 / ``core`` 核心词包含 /
+    ``""`` 未匹配。优先级 exact > history > core：工商登记状态直接决定风险结论，
+    宁可回落到核心词匹配并在事件里标注「人工核对」，也不因名称写法差异整源失效。
+    """
+    ent = _s(ent_name)
+    core = core_name(ent) if ent else ""
+    core = core if len(core) >= 4 else ""
+    exact = hist = fuzzy = None
+    for x in items:
+        if not isinstance(x, dict):
+            continue
+        nm = _s(x.get("name"))
+        if exact is None and ent and nm == ent:
+            exact = x
+            continue
+        if hist is None and ent and ent in history_names(x):
+            hist = x
+            continue
+        if fuzzy is None and core and core in nm:
+            fuzzy = x
+    if exact is not None:
+        return exact, "exact"
+    if hist is not None:
+        return hist, "history"
+    if fuzzy is not None:
+        return fuzzy, "core"
+    return None, ""
+
+
+def parse_events(item: dict, ent_name: str, matched_by: str = "") -> list:
+    """把 ApiZero 返回的单条企业记录归一化为工商事件（纯函数，便于单测）。
+
+    ``matched_by`` 来自 pick_record：``history``（曾用名）与 ``core``（核心词）
+    属弱匹配，会在摘要里标注核对提示，其中 ``core`` 还把 relevance 降为 medium。
+    """
     if not item:
         return []
     status = _s(item.get("reg_status"))
@@ -48,15 +110,13 @@ def parse_events(item: dict, ent_name: str) -> list:
         parts.append(f"成立日期：{item['establish_time']}")
     if _s(item.get("credit_code")):
         parts.append(f"信用代码：{item['credit_code']}")
-    history = item.get("history_names")
-    if isinstance(history, (list, tuple)):
-        old_names = "、".join(
-            _s(h.get("name") if isinstance(h, dict) else h)
-            for h in history if _s(h.get("name") if isinstance(h, dict) else h))
-    else:
-        old_names = _s(history)
+    old_names = "、".join(history_names(item))
     if old_names:
         parts.append(f"曾用名：{old_names}")
+    if matched_by == "history":
+        parts.append("按曾用名匹配（该主体曾用此名，属名称变更信号）")
+    elif matched_by == "core":
+        parts.append("按名称核心词匹配，可能非同一主体，请人工核对")
     summary = "；".join(parts)
     bad = any(k in status for k in _BAD_STATUS)
     title = f"{name}：工商登记状态【{status}】" if status else f"{name}：工商登记信息"
@@ -66,7 +126,7 @@ def parse_events(item: dict, ent_name: str) -> list:
         occurred_at=date.today().strftime("%Y-%m-%d"),
         severity="high" if bad else "low",
         sentiment="negative" if bad else "neutral",
-        relevance="high")]
+        relevance="medium" if matched_by == "core" else "high")]
 
 
 class ApiZeroProvider(ProviderBase):
@@ -89,12 +149,11 @@ class ApiZeroProvider(ProviderBase):
         items = data.get("list") or data.get("items") or data.get("results") or []
         if not isinstance(items, list):
             items = []
-        # 精确匹配企业全名，避免同名/简称误判
-        hit = next((x for x in items if isinstance(x, dict)
-                    and _s(x.get("name")) == ent.name), None)
+        # 三级匹配：全名精确 > 曾用名命中 > 核心词包含（弱匹配并标注人工核对）
+        hit, how = pick_record(items, ent.name)
         if hit is None:
             raise RuntimeError("ApiZero 未查到该企业")
-        events = parse_events(hit, ent.name)
+        events = parse_events(hit, ent.name, how)
         if not events:
             raise RuntimeError("ApiZero 未查到该企业")
         return events

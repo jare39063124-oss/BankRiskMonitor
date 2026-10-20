@@ -100,18 +100,32 @@ def test_real_config_declares_required_coverage_and_reports_gap():
 
 
 def test_required_coverage_reports_gap_when_reliable_source_disabled():
-    """把可靠源停用后，必备域必须重新被提示（防止「静默缺源」）。"""
+    """剔除全部「可靠源」（tier 1 与已配凭据的 tier 2）后，必备域必须重新被提示。"""
     from src.core import settings
     cfg = settings.config()
+
+    def unreliable(specs):
+        return [s for s in specs if not cov._is_reliable(s)]
+
     stripped = {
         "required_coverage": cfg.get("required_coverage"),
         "sources": {
-            "lawsuit": [s for s in cfg["sources"]["lawsuit"] if s.get("tier") != 1],
-            "enforcement": [s for s in cfg["sources"]["enforcement"] if s.get("tier") != 1],
+            "lawsuit": unreliable(cfg["sources"]["lawsuit"]),
+            "enforcement": unreliable(cfg["sources"]["enforcement"]),
         },
     }
     probs = cov.check_required_coverage(stripped)
     assert {p["category"] for p in probs} == {"lawsuit", "enforcement"}
+
+
+def test_env_ref_credentials_need_real_value():
+    """凭据写 ``${VAR}`` 时，环境变量取不到值就不算已配置（不报假 OK）。"""
+    from src.core import coverage as c
+    spec = {"name": "x", "enabled": True, "tier": 2, "requires_key": True,
+            "params": {"api_key": "${SURELY_NOT_SET_VAR_XYZ}"}}
+    assert c._has_credentials(spec) is False
+    assert c.category_coverage({"sources": {"lawsuit": [spec]}},
+                               "lawsuit")["level"] == c.LEVEL_WEAK
 
 
 def test_default_config_yaml_contains_required_coverage():

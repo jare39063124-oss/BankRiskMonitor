@@ -6,6 +6,7 @@ model_policy.yaml / .env（.env 只写空模板，绝不包含真实密钥）；
 默认配置兜底，保证 config()/model_policy() 永不因文件缺失或损坏而抛异常。
 """
 import os
+import re
 from typing import Any, Dict, List
 
 import yaml
@@ -14,6 +15,46 @@ from .paths import app_root
 
 _config: Dict[str, Any] = {}
 _policy: Dict[str, Any] = {}
+
+# 凭据间接引用：config.yaml 里写 ``${TAVILY_API_KEY}``，真实密钥放 .env（已 gitignore）。
+_ENV_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def load_env_file(path: str = "") -> None:
+    """把项目根 .env 的键注入 ``os.environ``（仅 setdefault，不覆盖已有环境变量）。
+
+    与 ``src/ai/llm_client.py`` 的同名逻辑一致：真实密钥只存在于 .env（不入库），
+    config.yaml 通过 ``${VAR}`` 间接引用。
+    """
+    p = path or os.path.join(app_root(), ".env")
+    try:
+        with open(p, "r", encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip("'").strip('"'))
+    except OSError:
+        pass
+
+
+load_env_file()
+
+
+def expand_env(value):
+    """解析 ``${VAR}`` 形式的凭据间接引用。
+
+    非占位符形式原样返回；占位符形式返回环境变量值（未设置则返回 ``""``，
+    由调用方按「未配置凭据」处理）。非字符串原样返回。
+    """
+    if not isinstance(value, str):
+        return value
+    m = _ENV_REF.match(value.strip())
+    if not m:
+        return value
+    return (os.environ.get(m.group(1)) or "").strip()
+
 
 # 内置默认全局配置：内容与项目根 config.yaml 保持一致（自举与兜底共用）
 DEFAULT_CONFIG_YAML = """\
@@ -96,6 +137,25 @@ sources:
       class: providers.biz_apizero.ApiZeroProvider
       params:
         api_key: ""
+    # Tavily 搜索（免费额度）：工商信息跨域补充源；api_key 走 .env 间接引用。
+    # query 只写企业全名精度最高（实测加关键词反而 0 命中）；涉诉/被执行走 rmfygg。
+    - name: tavily
+      enabled: true
+      tier: 2
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: biz_change
+        query: '"{name}"'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - qcc.com
+          - tianyancha.com
+          - aiqicha.baidu.com
+          - gsxt.gov.cn
+          - creditchina.gov.cn
     - name: tianapi
       enabled: false
       tier: 2
@@ -141,6 +201,29 @@ sources:
       tier: 3
       class: providers.court_wenshu.WenshuProvider
       params: {}
+    # 人民法院公告网（tier 1 可靠源）：真实渲染 + 页面内搜索，走 config 的 browser 段
+    - name: rmfygg
+      enabled: true
+      tier: 1
+      class: providers.court_rmfygg.RmfyggProvider
+      params:
+        settle_ms: 3000
+        timeout_seconds: 30
+    - name: tavily
+      enabled: false      # 涉诉走 rmfygg；法院域定向检索实测无结果，需要时再打开
+      tier: 2
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: lawsuit
+        query: '"{name}" 裁判文书'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - wenshu.court.gov.cn
+          - chinacourt.org
+          - court.gov.cn
     - name: commercial_api
       enabled: false
       tier: 2
@@ -157,6 +240,28 @@ sources:
       tier: 3
       class: providers.court_zxgk.ZxgkProvider
       params: {}
+    - name: rmfygg
+      enabled: true
+      tier: 1
+      class: providers.court_rmfygg.RmfyggProvider
+      params:
+        settle_ms: 3000
+        timeout_seconds: 30
+    - name: tavily
+      enabled: false      # 被执行走 rmfygg；法院域定向检索实测无结果，需要时再打开
+      tier: 2
+      requires_key: true
+      class: providers.tavily_search.TavilyProvider
+      params:
+        api_key: "${TAVILY_API_KEY}"
+        event_category: enforcement
+        query: '"{name}" 被执行人'
+        search_depth: advanced
+        max_results: 5
+        include_domains:
+          - zxgk.court.gov.cn
+          - creditchina.gov.cn
+          - court.gov.cn
     - name: credit_china
       enabled: true
       tier: 3
@@ -285,7 +390,7 @@ request:
 """
 
 # .env 空模板：只提供键名占位，绝不写入真实密钥
-DEFAULT_ENV = "OPENROUTER_API_KEY=\n"
+DEFAULT_ENV = "OPENROUTER_API_KEY=\nTAVILY_API_KEY=\n"
 
 
 def _load(path: str, default_text: str = "") -> Dict:

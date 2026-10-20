@@ -65,6 +65,26 @@ class ProviderBase:
         except ValueError:
             raise RuntimeError(f"{self.name} 返回非 JSON")
 
+    def http_post(self, url: str, **kw) -> requests.Response:
+        """POST 请求（节流/代理/UA/超时口径与 ``http_get`` 一致）。"""
+        self._throttle()
+        kw.setdefault("headers", self.headers())
+        kw.setdefault("timeout", self.timeout)
+        proxy = settings.config().get("app", {}).get("proxy", "")
+        if proxy:
+            kw.setdefault("proxies", {"http": proxy, "https": proxy})
+        return requests.post(url, **kw)
+
+    def _json_post(self, url: str, **kw) -> dict:
+        """JSON 优先 POST；非 200 或非 JSON 抛 ``RuntimeError``。"""
+        resp = self.http_post(url, **kw)
+        if resp.status_code != 200:
+            raise RuntimeError(f"{self.name} HTTP {resp.status_code}")
+        try:
+            return resp.json()
+        except ValueError:
+            raise RuntimeError(f"{self.name} 返回非 JSON")
+
     def fetch(self, ent: Enterprise) -> List[Event]:
         raise NotImplementedError
 
@@ -140,6 +160,8 @@ def load_providers(category: str):
                 mod = importlib.import_module("src." + mod_path)
             cls = getattr(mod, cls_name)
             params = dict(spec.get("params") or {})
+            # 凭据支持 ${VAR} 间接引用（真实密钥放 .env，config.yaml 不入库）
+            params = {k: settings.expand_env(v) for k, v in params.items()}
             if spec.get("requires_auth"):
                 params["requires_auth"] = True
             out.append(cls(params))
