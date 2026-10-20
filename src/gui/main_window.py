@@ -44,6 +44,7 @@ from .dialogs import (
     _read_env,
 )
 from .event_detail import BaselineHistoryDialog, EventDetailDialog
+from .hover_effect import install_hover_scale_recursive, refresh_hover_effects
 from .map_view import MapView
 from .panels import AISummaryPanel, AlertPanel, EnterpriseListPanel, EventFeedPanel
 from .report_page import ReportDialog
@@ -145,6 +146,8 @@ class MainWindow(QMainWindow):
         self._change_events = []
 
         self._build_ui()
+        # 全局安装悬停缩放动效（幂等，重复安装不会叠加控制器）
+        install_hover_scale_recursive(self)
         self._setup_timer()
         self._update_status_bar()
         self._load_ui_settings()
@@ -207,6 +210,10 @@ class MainWindow(QMainWindow):
         self.source_label = QLabel(self)
         self.ai_label = QLabel(self)
         self.countdown_label = QLabel(self)
+        # 社媒登录态状态：可点击直达登录态管理
+        self.social_label = QLabel(self)
+        self.social_label.setToolTip("点击管理社媒登录态（抖音/快手/小红书/微博）")
+        self.social_label.mousePressEvent = lambda *_: self._open_social_auth()
         self.settings_btn = QPushButton("设置", self)
         self.settings_btn.setFlat(True)
         self.settings_btn.setStyleSheet(
@@ -217,6 +224,7 @@ class MainWindow(QMainWindow):
         bar = self.statusBar()
         bar.addWidget(self.model_label)
         bar.addWidget(self.source_label)
+        bar.addWidget(self.social_label)
         bar.addWidget(self.ai_label)
         bar.addWidget(self.countdown_label)
         bar.addPermanentWidget(QLabel(DISCLAIMER, self))
@@ -250,6 +258,7 @@ class MainWindow(QMainWindow):
             ("股权穿透", self._penetrate_selected),
             ("上传授信材料", self._upload_material),
             ("AI 影响研判", self._ai_impact),
+            ("社媒登录态", self._open_social_auth),
         ]
         for text, slot in analysis_actions:
             act = QAction(text, self)
@@ -284,6 +293,8 @@ class MainWindow(QMainWindow):
         self._reload_events()
         self._reload_map(ents)
         self._update_status_bar()
+        # 动态创建的控件（列表内按钮等）补装悬停缩放
+        refresh_hover_effects()
 
     # ---------- v2 增量：读层派生判定（不落库，ARCH §1.3） ----------
     def _classify_event(self, event):
@@ -455,6 +466,27 @@ class MainWindow(QMainWindow):
             self.ai_label.setText("模式：AI 在线")
         else:
             self.ai_label.setText("模式：自动化脚本降级")
+
+        # 社媒登录态状态（点击可直达登录态管理）
+        try:
+            from ..core import social_auth
+            summary = social_auth.auth_summary()
+            cfg_n = summary["configured"]
+            total_n = summary["total"]
+            if cfg_n == 0:
+                self.social_label.setText("社媒登录态：未配置")
+                self.social_label.setStyleSheet(f"color:{theme.SEVERITY_ORANGE};")
+                self.social_label.setToolTip(
+                    "抖音/快手/小红书/微博 需要登录才能取到内容，"
+                    "当前未配置登录态，社媒源会被跳过。点击配置。")
+            else:
+                self.social_label.setText(f"社媒登录态：{cfg_n}/{total_n}")
+                self.social_label.setStyleSheet(f"color:{theme.TEXT_SECOND};")
+                self.social_label.setToolTip(
+                    "已配置：" + "、".join(s["label"] for s in summary["sites"])
+                    + "。点击管理。")
+        except Exception:  # noqa: BLE001 - 状态栏兜底
+            self.social_label.setText("")
 
         self._setup_timer()
 
@@ -767,6 +799,12 @@ class MainWindow(QMainWindow):
             self._next_refresh = None
             self._update_status_bar()
             self.reload_data()
+
+    def _open_social_auth(self):
+        """打开社媒登录态管理（独立弹窗）。"""
+        from .social_auth_page import SocialAuthDialog
+        SocialAuthDialog(self).exec()
+        self._update_status_bar()
 
     # ================= R5：干净退出 / 单实例激活 =================
     def _on_instance_activated(self):
