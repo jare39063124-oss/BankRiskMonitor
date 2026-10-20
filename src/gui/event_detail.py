@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from . import theme
 from ..core.baseline_compare import DIM_LABELS, parse_date
 from ..core.models import CATEGORY_LABELS
+from .hover_effect import setup_dialog_hover
 
 SEV_LABELS = {"high": "●高危", "medium": "●中危", "low": "●关注"}
 SENTIMENT_LABELS = {"negative": "负面", "neutral": "中性", "positive": "正面"}
@@ -133,6 +134,7 @@ class EventDetailDialog(QDialog):
         btns.addButton(self.filter_btn, QDialogButtonBox.ButtonRole.ActionRole)
         btns.addButton(close_btn, QDialogButtonBox.ButtonRole.AcceptRole)
         root.addWidget(btns)
+        setup_dialog_hover(self)
 
     # ---------- 字段取值（纯函数，便于单测） ----------
     def _title_text(self) -> str:
@@ -276,6 +278,7 @@ class BaselineHistoryDialog(QDialog):
         btns.button(QDialogButtonBox.StandardButton.Close).setText("关闭")
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
+        setup_dialog_hover(self)
 
     def _source_text(self) -> str:
         if self.baseline is None:
