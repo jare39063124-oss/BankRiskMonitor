@@ -1,7 +1,12 @@
-"""Provider 抽象契约与 fallback 调度器（数据源声明式登记见 config.yaml sources 段）。"""
+"""Provider 抽象契约与多源并发调度器（数据源声明式登记见 config.yaml sources 段）。
+
+调度策略（v3）：同一类目下**所有**启用的源并发采集并合并结果（不再「首个非空即返回」），
+每个源的成败单独记账，供「源健康度看板」展示；任一源失败不影响其余源。
+"""
 import logging
 import time
-from typing import List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -9,6 +14,11 @@ from ..core.models import Event, Enterprise
 from ..core import settings
 
 log = logging.getLogger(__name__)
+
+
+class SocialAuthMissing(RuntimeError):
+    """该源需要登录态但未配置（调度器据此跳过该源，且不发起任何请求）。"""
+
 
 class ProviderBase:
     """所有数据源适配器的基类。子类实现 fetch() 返回归一化 Event 列表。"""
@@ -112,7 +122,10 @@ def summarize_sources(cfg: dict = None) -> str:
     return f"数据源：{enabled}/{total} 启用"
 
 def load_providers(category: str):
-    """按 config.yaml 中该类目的声明顺序实例化启用的 Provider。"""
+    """按 config.yaml 中该类目的声明顺序实例化启用的 Provider。
+
+    spec 级开关（``requires_auth`` 等）会并入 params 传给适配器。
+    """
     out = []
     for spec in settings.config().get("sources", {}).get(category, []):
         if not spec.get("enabled"):
@@ -126,21 +139,144 @@ def load_providers(category: str):
                 # 开发模式下顶层 providers 包不可见，回退 src.providers.*
                 mod = importlib.import_module("src." + mod_path)
             cls = getattr(mod, cls_name)
-            out.append(cls(spec.get("params", {})))
+            params = dict(spec.get("params") or {})
+            if spec.get("requires_auth"):
+                params["requires_auth"] = True
+            out.append(cls(params))
         except Exception as e:  # 单个源加载失败不影响其他源
             log.warning("provider %s load failed: %s", spec.get("name"), e)
     return out
 
+
+# ---------------------------------------------------------------------------
+# 每源运行统计（源健康度看板数据源）
+# ---------------------------------------------------------------------------
+_SOURCE_STATS: Dict[str, Dict[str, Any]] = {}
+# 最近一次各类目的采集明细（供同步层/健康度看板读取每源结果）
+_LAST_RUN: Dict[str, Dict[str, Any]] = {}
+
+
+def _record_stat(name: str, status: str, count: int, error: str = "",
+                 category: str = ""):
+    rec = _SOURCE_STATS.setdefault(
+        name, {"ok": 0, "empty": 0, "failed": 0, "skipped": 0,
+               "events": 0, "last_error": "", "last_ok_at": "", "category": category})
+    if category:
+        rec["category"] = category
+    if status == "ok":
+        rec["ok"] += 1
+        rec["events"] += count
+        rec["last_ok_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    elif status == "empty":
+        rec["empty"] += 1
+    elif status == "skipped":
+        rec["skipped"] += 1
+        if error:
+            rec["last_error"] = error
+    else:
+        rec["failed"] += 1
+        rec["last_error"] = error or "未知错误"
+
+
+def source_stats(category: str = "") -> Dict[str, Dict[str, Any]]:
+    """返回各源累计运行统计的副本；传 category 可只看该类目。"""
+    out = {}
+    for k, v in _SOURCE_STATS.items():
+        if category and v.get("category") != category:
+            continue
+        out[k] = dict(v)
+    return out
+
+
+def reset_source_stats():
+    """清空统计（供「立即自测」前重置）。"""
+    _SOURCE_STATS.clear()
+    _LAST_RUN.clear()
+
+
+def last_run(category: str) -> Dict[str, Any]:
+    """返回该类目最近一次采集明细（含每源 stats/errors）的副本。"""
+    return dict(_LAST_RUN.get(category) or {})
+
+
+def _safe_fetch(p, ent: Enterprise):
+    """单源采集：返回 (status, events, error)；异常不外泄。"""
+    try:
+        if getattr(p, "auth_required", False) is True and not p.has_auth():
+            return "skipped", [], f"{p.name} 需登录才能访问，未配置登录态（已跳过）"
+        events = p.fetch(ent)
+        if events:
+            return "ok", list(events), ""
+        return "empty", [], f"{p.name}: 无结果"
+    except SocialAuthMissing as e:
+        return "skipped", [], str(e)
+    except Exception as e:
+        log.warning("provider %s failed: %s", p.name, e)
+        return "failed", [], f"{p.name}: {e}"
+
+
+def run_category(category: str, ent: Enterprise, workers: int = 4) -> Dict[str, Any]:
+    """并发采集该类目下所有启用的源并合并结果。
+
+    返回::
+
+        {
+          "category": "social",
+          "events":   [Event, ...],          # 跨源去重后的合并结果
+          "sources":  ["weibo", "wechat_sogou"],  # 有结果的源（按配置顺序）
+          "errors":   {"weibo": "..."},      # 每个失败/跳过源的说明
+          "stats":    {"weibo": {"status": "ok", "count": 10, "error": ""}},
+        }
+
+    任一源失败不影响其余源；标题相同的条目跨源去重（保留先出现者）。
+    """
+    providers = load_providers(category)
+    out: Dict[str, Any] = {"category": category, "events": [], "sources": [],
+                           "errors": {}, "stats": {}}
+    if not providers:
+        return out
+    results: Dict[int, Any] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(providers)))) as ex:
+        futures = {ex.submit(_safe_fetch, p, ent): i for i, p in enumerate(providers)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                results[idx] = fut.result()
+            except Exception as e:  # 兜底：理论上 _safe_fetch 不外泄异常
+                results[idx] = ("failed", [], f"{providers[idx].name}: {e}")
+    merged: List[Event] = []
+    seen_titles = set()
+    for idx, p in enumerate(providers):
+        status, events, error = results.get(idx, ("failed", [], f"{p.name}: 未执行"))
+        _record_stat(p.name, status, len(events), error, category=category)
+        out["stats"][p.name] = {"status": status, "count": len(events), "error": error}
+        if status == "ok":
+            out["sources"].append(p.name)
+            for ev in events:
+                key = (ev.title or "").strip()
+                if key and key in seen_titles:
+                    continue
+                if key:
+                    seen_titles.add(key)
+                merged.append(ev)
+        elif error:
+            out["errors"][p.name] = error
+    out["events"] = merged
+    _LAST_RUN[category] = out
+    return out
+
+
 def run_with_fallback(category: str, ent: Enterprise) -> Tuple[List[Event], str]:
-    """依次尝试该类目下启用的 Provider，成功即返回（结构化+去重由调用方入库）。"""
-    errs = []
-    for p in load_providers(category):
-        try:
-            events = p.fetch(ent)
-            if events:
-                return events, p.name
-            errs.append(f"{p.name}: empty")
-        except Exception as e:
-            log.warning("provider %s failed: %s", p.name, e)
-            errs.append(f"{p.name}: {e}")
-    return [], "; ".join(errs)
+    """采集该类目下所有启用源并返回 ``(合并事件, 来源标签)``。
+
+    向后兼容原契约：``来源标签`` 在有成功源时为成功源名（多源用逗号分隔），
+    全部失败时为错误串（供上层展示失败原因）。
+    """
+    result = run_category(category, ent)
+    events = result["events"]
+    if events:
+        return events, ",".join(result["sources"])
+    errs = result.get("errors") or {}
+    if errs:
+        return [], "; ".join(f"{k}: {v}" for k, v in errs.items())
+    return [], f"{category}: 无可用数据源或均无结果"
