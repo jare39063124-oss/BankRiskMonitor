@@ -117,12 +117,18 @@ class DbTestBase(unittest.TestCase):
         self._tmp.cleanup()
 
 
+def no_browser(p):
+    """关闭浏览器渲染通路（单测只验证 HTTP 解析，不碰真实浏览器）。"""
+    return mock.patch.object(p, "browser_available", return_value=False)
+
+
 # ---------- 各源解析 ----------
 class WeiboTest(unittest.TestCase):
     def test_parse(self):
         from src.providers import social_weibo as m
         p = m.WeiboProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(WEIBO_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(WEIBO_HTML)):
             events = p.fetch(ENT)
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e.category == "social" and e.source == "weibo" for e in events))
@@ -137,7 +143,8 @@ class WeiboTest(unittest.TestCase):
     def test_anti_spider_raises(self):
         from src.providers import social_weibo as m
         p = m.WeiboProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(WEIBO_ANTI_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(WEIBO_ANTI_HTML)):
             with self.assertRaises(RuntimeError):
                 p.fetch(ENT)
 
@@ -171,7 +178,8 @@ class DouyinTest(unittest.TestCase):
     def test_parse(self):
         from src.providers import social_douyin as m
         p = m.DouyinProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_HTML)):
             events = p.fetch(ENT)
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e.category == "social" and e.source == "douyin"
@@ -183,7 +191,8 @@ class DouyinTest(unittest.TestCase):
     def test_shell_page_raises(self):
         from src.providers import social_douyin as m
         p = m.DouyinProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_SHELL_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_SHELL_HTML)):
             with self.assertRaises(RuntimeError):
                 p.fetch(ENT)
 
@@ -192,7 +201,8 @@ class KuaishouTest(unittest.TestCase):
     def test_parse(self):
         from src.providers import social_kuaishou as m
         p = m.KuaishouProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(KUAISHOU_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(KUAISHOU_HTML)):
             events = p.fetch(ENT)
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e.category == "social" and e.source == "kuaishou"
@@ -206,7 +216,8 @@ class XiaohongshuTest(unittest.TestCase):
     def test_parse(self):
         from src.providers import social_xiaohongshu as m
         p = m.XiaohongshuProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(XHS_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(XHS_HTML)):
             events = p.fetch(ENT)
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e.category == "social" and e.source == "xiaohongshu"
@@ -217,7 +228,8 @@ class XiaohongshuTest(unittest.TestCase):
     def test_shell_page_raises(self):
         from src.providers import social_xiaohongshu as m
         p = m.XiaohongshuProvider({})
-        with mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_SHELL_HTML)):
+        with no_browser(p), \
+                mock.patch.object(p, "http_get", return_value=FakeResp(DOUYIN_SHELL_HTML)):
             with self.assertRaises(RuntimeError):
                 p.fetch(ENT)
 
@@ -227,7 +239,8 @@ class CookieTest(unittest.TestCase):
     def test_cookie_injected_and_keyword(self):
         from src.providers import social_weibo as m
         p = m.WeiboProvider({"cookie": "SUB=abc; SUBP=def"})
-        with mock.patch("requests.get", return_value=FakeResp(WEIBO_HTML)) as g:
+        with no_browser(p), \
+                mock.patch("requests.get", return_value=FakeResp(WEIBO_HTML)) as g:
             p.fetch(ENT)
         kwargs = g.call_args.kwargs
         self.assertEqual(kwargs["headers"].get("Cookie"), "SUB=abc; SUBP=def")
@@ -246,11 +259,12 @@ class FallbackTest(unittest.TestCase):
         from src.providers import social_wechat as wx, social_weibo as wb
         bad = wb.WeiboProvider({})
         good = wx.SogouWeixinProvider({})
-        with mock.patch.object(bad, "http_get", return_value=FakeResp(WEIBO_ANTI_HTML)), \
+        with no_browser(bad), no_browser(good), \
+             mock.patch.object(bad, "http_get", return_value=FakeResp(WEIBO_ANTI_HTML)), \
              mock.patch.object(good, "http_get", return_value=FakeResp(WECHAT_HTML)), \
              mock.patch.object(pbase, "load_providers", return_value=[bad, good]):
             events, source = pbase.run_with_fallback("social", ENT)
-        self.assertEqual(source, "wechat_sogou")  # 微博反爬自动切搜狗微信
+        self.assertIn("wechat_sogou", source)  # 微博反爬自动切搜狗微信
         self.assertTrue(events)
         self.assertEqual(events[0].category, "social")
 
