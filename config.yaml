@@ -55,8 +55,8 @@ sources:
         base_url: https://api.istero.com/service/pengpaixinwen/reshoubang
         token: ""
     - name: newsapi
-      enabled: false
-      tier: 2            # 条件可用：需 Key（付费/限次）
+      enabled: false     # 条件可用：需 Key（付费/限次）
+      tier: 2
       requires_key: true
       class: providers.newsapi_org.NewsApiProvider
       params:
@@ -209,6 +209,33 @@ sources:
       params:
         cookie: ""
         settle_ms: 4000
+    # OpenCLI 后端：通过本地 opencli CLI 复用**已登录的 Chrome** 做跨平台采集。
+    #   复用浏览器登录态，绕开各平台风控；与上面的自研 CDP 方案并存互备。
+    #   前置条件：① npm install -g @jackwener/opencli
+    #             ② Chrome 安装 Browser Bridge 扩展（tools/opencli_ext 目录，
+    #               chrome://extensions → 开发者模式 → 加载已解压的扩展程序）
+    #             ③ 在该 Chrome 里用小号登录目标平台
+    #   未满足前置时该源会被跳过，不影响其它社媒源。默认关闭，需显式启用。
+    - name: opencli
+      enabled: false
+      tier: 2
+      class: providers.opencli_base.OpenCliProvider
+      params:
+        platforms:          # 覆盖平台清单（可按需增删）
+          - weibo
+          - xiaohongshu
+          - weixin
+          - zhihu
+          - tieba
+          - hupu
+          - bilibili
+          - jike
+          - 36kr
+          - linux-do
+          - douyin
+        limit: 10
+        timeout_seconds: 90
+        cli_path: ""        # 留空则从 PATH 查找 opencli
 
 network:
   timeout_seconds: 15
