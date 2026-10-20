@@ -174,12 +174,16 @@ sources:
         api_key: ""
         vendor: qichacha
   social:
+    # requires_auth=true 的源：未配置登录态时跳过且不发请求（按需访问）
+    # settle_ms：浏览器渲染后的额外等待毫秒（结果异步回填，越大越慢越全）
     - name: weibo
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_weibo.WeiboProvider
       params:
         cookie: ""
+        settle_ms: 2500
     - name: wechat_sogou
       enabled: true
       tier: 3
@@ -189,21 +193,27 @@ sources:
     - name: douyin
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_douyin.DouyinProvider
       params:
         cookie: ""
+        settle_ms: 4000
     - name: kuaishou
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_kuaishou.KuaishouProvider
       params:
         cookie: ""
+        settle_ms: 4000
     - name: xiaohongshu
       enabled: true
       tier: 3
+      requires_auth: true
       class: providers.social_xiaohongshu.XiaohongshuProvider
       params:
         cookie: ""
+        settle_ms: 4000
 
 network:
   timeout_seconds: 15
