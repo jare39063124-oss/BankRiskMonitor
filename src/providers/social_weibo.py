@@ -10,11 +10,13 @@ from bs4 import BeautifulSoup
 try:
     from src.core.models import Enterprise
     from src.providers.news_baidu import parse_time
-    from src.providers.social_base import SocialProviderBase, anti_spider_hit
+    from src.providers.social_base import (SocialProviderBase, anti_spider_hit,
+                                           login_required_hint)
 except ImportError:
     from ..core.models import Enterprise
     from .news_baidu import parse_time
-    from .social_base import SocialProviderBase, anti_spider_hit
+    from .social_base import (SocialProviderBase, anti_spider_hit,
+                              login_required_hint)
 
 SEARCH_URL = "https://s.weibo.com/weibo"
 _ANTI_MARKS = ("passport.weibo.com", "visitor.weibo.com", "验证码", "微博安全中心")
@@ -33,14 +35,14 @@ def parse_weibo_time(s: str) -> str:
 class WeiboProvider(SocialProviderBase):
     name = "weibo"
     category = "social"
+    site = "weibo"
+    referer = "https://s.weibo.com/"
 
     def fetch(self, ent: Enterprise) -> list:
-        resp = self.http_get(SEARCH_URL, params={"q": ent.name})
-        if resp.status_code != 200:
-            raise RuntimeError(f"微博 HTTP {resp.status_code}")
-        text = resp.text
+        self.ensure_auth()
+        text = self.fetch_html(SEARCH_URL, params={"q": ent.name})
         if anti_spider_hit(text, _ANTI_MARKS):
-            raise RuntimeError("微博触发登录墙/验证码")
+            raise RuntimeError(login_required_hint("微博触发登录墙/验证码"))
         return self._parse(text, ent)  # 无结果返回空列表，由 fallback 切换下一源
 
     def _parse(self, html: str, ent: Enterprise) -> list:
