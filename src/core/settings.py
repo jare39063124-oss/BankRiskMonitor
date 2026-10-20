@@ -214,6 +214,27 @@ sources:
       params:
         cookie: ""
         settle_ms: 4000
+    # OpenCLI 后端：复用已登录 Chrome 做跨平台采集（与自研 CDP 方案并存互备）
+    - name: opencli
+      enabled: false
+      tier: 2
+      class: providers.opencli_base.OpenCliProvider
+      params:
+        platforms:
+          - weibo
+          - xiaohongshu
+          - weixin
+          - zhihu
+          - tieba
+          - hupu
+          - bilibili
+          - jike
+          - 36kr
+          - linux-do
+          - douyin
+        limit: 10
+        timeout_seconds: 90
+        cli_path: ""
 
 network:
   timeout_seconds: 15
