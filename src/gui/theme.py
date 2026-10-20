@@ -44,7 +44,9 @@ BG_ALERT_MEDIUM = "#2A1D0E"
 
 # ---------- v2 增量 R4：事件流两态 / 企业风险色标 ----------
 # 事件流两态配色（ARCH §8.3，复用既有 tokens，不新造颜色）
-ROW_BASELINE_FG = TEXT_SECOND     # 放款前·基线：灰显降饱和
+# 基线行不再弱化到 TEXT_SECOND：#8B98A9 在交替行底色上偏暗，
+# 改为更亮的冷灰 #A7B4C2，正文对比度 8.7:1（≥4.5:1 硬性要求）
+ROW_BASELINE_FG = "#A7B4C2"      # 放款前·基线：冷灰（可读但与变更态区分）
 ROW_CHANGE_FG = TEXT_MAIN         # 放款后·变更：正常高亮
 ROW_UNDETERMINED_FG = TEXT_MAIN   # 无法判定：正常呈现
 
@@ -65,6 +67,32 @@ FONT_FAMILY = "微软雅黑"
 FONT_SIZE = 12              # 全局字号约 9pt
 RADIUS = 4                  # 卡片圆角
 SPACE = 8                   # 统一 8px 间距栅格
+
+
+def _channel_lum(c: float) -> float:
+    c = c / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(color: str) -> float:
+    """sRGB 相对亮度（WCAG 2.1 定义）。"""
+    h = color.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return (0.2126 * _channel_lum(r) + 0.7152 * _channel_lum(g)
+            + 0.0722 * _channel_lum(b))
+
+
+def contrast_ratio(fg: str, bg: str) -> float:
+    """前景/背景对比度（WCAG），正常文字达标线为 4.5:1。"""
+    l1 = relative_luminance(fg)
+    l2 = relative_luminance(bg)
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
 
 
 def apply_palette(app):
@@ -291,6 +319,23 @@ QListWidget::item, QTreeWidget::item, QListView::item {{
 QListWidget::item:hover, QTreeWidget::item:hover, QListView::item:hover {{
     background: {BG_HOVER};
 }}
+/* 树/表悬停：左侧提示条 + 提亮边框，明确区别于常态 */
+QTreeWidget::item:hover, QTableView::item:hover {{
+    background: {BG_HOVER};
+    color: {TEXT_MAIN};
+    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY_DIM};
+}}
+/* 树/表选中态：左侧主题色竖条 + 深绿底（与列表保持一致的选中语言） */
+QTreeWidget::item:selected, QTableView::item:selected {{
+    background: {PRIMARY_BG};
+    color: {PRIMARY};
+    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY};
+}}
+QTreeWidget::item:selected:!active, QTableView::item:selected:!active {{
+    background: {PRIMARY_BG};
+    color: {PRIMARY};
+    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY};
+}}
 QTableView {{
     gridline-color: {BORDER};
 }}
@@ -478,7 +523,7 @@ QListWidget::item:selected {{
 }}
 QListWidget::item:selected:!active {{
     background: {PRIMARY_BG};
-    color: {PRIMARY};
+    border-left: {SELECT_BAR_WIDTH}px solid {PRIMARY};
 }}
 
 /* 风险色标 / 事件数徽标（QLabel 按 badge 属性着色） */
