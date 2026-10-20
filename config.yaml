@@ -55,8 +55,8 @@ sources:
         base_url: https://api.istero.com/service/pengpaixinwen/reshoubang
         token: ""
     - name: newsapi
-      enabled: false     # 条件可用：需 Key（付费/限次）
-      tier: 2
+      enabled: false
+      tier: 2            # 条件可用：需 Key（付费/限次）
       requires_key: true
       class: providers.newsapi_org.NewsApiProvider
       params:
