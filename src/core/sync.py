@@ -7,9 +7,9 @@ from .models import CATEGORIES, Enterprise
 from .relevance import filter_relevant
 
 try:
-    from ..providers.base import run_with_fallback
+    from ..providers.base import last_run, run_with_fallback
 except ImportError:
-    from src.providers.base import run_with_fallback
+    from src.providers.base import last_run, run_with_fallback
 
 CSV_HEADERS = ["企业名称", "统一社会信用代码", "省份", "城市", "授信备注", "放款日期"]
 
@@ -72,12 +72,18 @@ def run_sync(ent: Enterprise) -> dict:
                 ev.enterprise_id = ent.id
                 if db.insert_event(ev):
                     inserted += 1
+            # 每源明细（成功/失败/跳过），供「源健康度看板」与同步报告使用
+            detail = last_run(cat) or {}
             results[cat] = {"inserted": inserted, "dropped_old": dropped,
                             "filtered": fetched - len(events),
                             "source": source if events else "",
-                            "error": "" if events else source}
+                            "error": "" if events else source,
+                            "sources": list(detail.get("sources") or []),
+                            "stats": dict(detail.get("stats") or {}),
+                            "errors": dict(detail.get("errors") or {})}
         except Exception as e:  # run_with_fallback 内部已兜底，此处防御额外异常
-            results[cat] = {"inserted": 0, "dropped_old": 0, "source": "", "error": str(e)}
+            results[cat] = {"inserted": 0, "dropped_old": 0, "source": "", "error": str(e),
+                            "sources": [], "stats": {}, "errors": {}}
     return results
 
 
