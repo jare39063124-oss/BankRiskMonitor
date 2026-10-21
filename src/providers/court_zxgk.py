@@ -2,6 +2,10 @@
 
 接口：http://zxgk.court.gov.cn/zhixing/new/select（POST 表单，需验证码）。
 被验证码拦截时抛异常走 fallback；命中则生成 high severity 事件（含案号）。
+
+实测（2026-10）：POST 与首页均被 WAF 拦截（HTTP 412，``__jsluid_s`` 加速乐
+JS 挑战），程序无法自动通过。因此本源按**尽力而为**处理，错误信息必须给出
+可操作补源建议；「被执行」域的可靠数据由人民法院公告网（rmfygg，tier 1）承担。
 """
 import requests
 
@@ -45,20 +49,30 @@ class ZxgkProvider(ProviderBase):
                 "captchaId": "", "selectCode": ""}
         resp = self.http_post(SELECT_URL, data=form)
         if resp.status_code != 200:
-            raise RuntimeError(f"执行信息网 HTTP {resp.status_code}")
+            raise RuntimeError(
+                f"执行信息网 HTTP {resp.status_code}（反爬/JS 挑战拦截）。"
+                "该站需人工输入验证码，程序无法自动通过；"
+                "被执行线索可由人民法院公告网（rmfygg）采集，"
+                "或用连接器代查后导入。")
         try:
             payload = resp.json()
         except ValueError:
             if "验证码" in resp.text:
-                raise RuntimeError("执行信息网被验证码拦截")
-            raise RuntimeError("执行信息网返回非 JSON")
+                raise RuntimeError(
+                    "执行信息网被验证码拦截（需人工识别，程序无法自动通过）。"
+                    "建议改用人民法院公告网（rmfygg）或连接器代查。")
+            raise RuntimeError(
+                "执行信息网返回非 JSON（多为反爬拦截页）。"
+                "建议改用人民法院公告网（rmfygg）或连接器代查。")
         if not isinstance(payload, dict):
             raise RuntimeError("执行信息网返回结构异常")
         status = payload.get("status")
         message = str(payload.get("message") or payload.get("msg") or "")
         if status != 1:
             if "验证码" in message:
-                raise RuntimeError("执行信息网被验证码拦截")
+                raise RuntimeError(
+                    "执行信息网被验证码拦截（需人工识别，程序无法自动通过）。"
+                    "建议改用人民法院公告网（rmfygg）或连接器代查。")
             return []  # 正常无记录
         rows = payload.get("data") or payload.get("list") or []
         events = []

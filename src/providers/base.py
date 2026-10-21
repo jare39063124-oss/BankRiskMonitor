@@ -179,12 +179,21 @@ _LAST_RUN: Dict[str, Dict[str, Any]] = {}
 
 
 def _record_stat(name: str, status: str, count: int, error: str = "",
-                 category: str = ""):
+                 category: str = "", elapsed_ms: int = 0):
+    """记账一次源调用结果（含耗时，供源健康度看板展示）。"""
     rec = _SOURCE_STATS.setdefault(
         name, {"ok": 0, "empty": 0, "failed": 0, "skipped": 0,
-               "events": 0, "last_error": "", "last_ok_at": "", "category": category})
+               "events": 0, "last_ok_at": "", "category": category,
+               "last_status": "", "last_count": 0, "last_elapsed_ms": 0,
+               "last_at": ""})
     if category:
         rec["category"] = category
+    rec["last_status"] = status
+    rec["last_count"] = count
+    rec["last_elapsed_ms"] = int(elapsed_ms)
+    rec["last_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    if error:
+        rec["last_error"] = error
     if status == "ok":
         rec["ok"] += 1
         rec["events"] += count
@@ -221,20 +230,59 @@ def last_run(category: str) -> Dict[str, Any]:
     return dict(_LAST_RUN.get(category) or {})
 
 
+def health_report() -> List[Dict[str, Any]]:
+    """汇总**全部已登记源**的健康度（供 GUI 源健康度看板）。
+
+    每个源一行：名称、所属信息域、是否启用、tier、最近一次结果、耗时、条数、
+    失败原因。**未调用过的源**也会出现（状态「未调用」），这样用户能一眼看出
+    「哪些源还没跑过」而不是只看到跑过的部分。
+    """
+    from ..core import settings as _settings
+    from ..core.models import CATEGORIES
+
+    cfg = _settings.config()
+    stats = _SOURCE_STATS
+    rows: List[Dict[str, Any]] = []
+    for cat in CATEGORIES:
+        for spec in (cfg.get("sources", {}) or {}).get(cat, []) or []:
+            name = spec.get("name", "?")
+            st = stats.get(name) or {}
+            rows.append({
+                "name": name,
+                "category": cat,
+                "enabled": bool(spec.get("enabled")),
+                "tier": resolve_tier(spec),
+                "status": st.get("last_status", ""),
+                "count": st.get("last_count", 0),
+                "elapsed_ms": st.get("last_elapsed_ms", 0),
+                "error": st.get("last_error", ""),
+                "last_at": st.get("last_at", ""),
+                "ok_count": st.get("ok", 0),
+                "failed_count": st.get("failed", 0),
+            })
+    return rows
+
+
 def _safe_fetch(p, ent: Enterprise):
-    """单源采集：返回 (status, events, error)；异常不外泄。"""
+    """单源采集：返回 (status, events, error, elapsed_ms)；异常不外泄。"""
+    t0 = time.time()
+
+    def _done(status, events, error=""):
+        return status, events, error, int((time.time() - t0) * 1000)
+
     try:
         if getattr(p, "auth_required", False) is True and not p.has_auth():
-            return "skipped", [], f"{p.name} 需登录才能访问，未配置登录态（已跳过）"
+            return _done("skipped", [],
+                         f"{p.name} 需登录才能访问，未配置登录态（已跳过）")
         events = p.fetch(ent)
         if events:
-            return "ok", list(events), ""
-        return "empty", [], f"{p.name}: 无结果"
+            return _done("ok", list(events), "")
+        return _done("empty", [], f"{p.name}: 无结果")
     except SocialAuthMissing as e:
-        return "skipped", [], str(e)
+        return _done("skipped", [], str(e))
     except Exception as e:
         log.warning("provider %s failed: %s", p.name, e)
-        return "failed", [], f"{p.name}: {e}"
+        return _done("failed", [], f"{p.name}: {e}")
 
 
 def run_category(category: str, ent: Enterprise, workers: int = 4) -> Dict[str, Any]:
@@ -269,9 +317,12 @@ def run_category(category: str, ent: Enterprise, workers: int = 4) -> Dict[str, 
     merged: List[Event] = []
     seen_titles = set()
     for idx, p in enumerate(providers):
-        status, events, error = results.get(idx, ("failed", [], f"{p.name}: 未执行"))
-        _record_stat(p.name, status, len(events), error, category=category)
-        out["stats"][p.name] = {"status": status, "count": len(events), "error": error}
+        status, events, error, elapsed = results.get(
+            idx, ("failed", [], f"{p.name}: 未执行", 0))
+        _record_stat(p.name, status, len(events), error, category=category,
+                     elapsed_ms=elapsed)
+        out["stats"][p.name] = {"status": status, "count": len(events),
+                                "error": error, "elapsed_ms": elapsed}
         if status == "ok":
             out["sources"].append(p.name)
             for ev in events:

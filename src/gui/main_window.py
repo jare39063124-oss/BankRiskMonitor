@@ -46,8 +46,16 @@ from .dialogs import (
 from .event_detail import BaselineHistoryDialog, EventDetailDialog
 from .hover_effect import install_hover_scale_recursive, refresh_hover_effects
 from .map_view import MapView
-from .panels import AISummaryPanel, AlertPanel, EnterpriseListPanel, EventFeedPanel
+from .panels import (
+    ROLE_EVENT,
+    AISummaryPanel,
+    AlertPanel,
+    EnterpriseListPanel,
+    EventFeedPanel,
+)
+from .postloan_page import PostLoanDialog
 from .report_page import ReportDialog
+from .role_card import RoleCard
 from .workers import FnWorker
 
 try:
@@ -63,7 +71,8 @@ SEV_LABELS = {"high": "高危", "medium": "中危", "low": "关注"}
 DISCLAIMER = "仅采集公开渠道信息用于银行内部贷后管理，不向客户发送任何信息"
 
 # 显示设置区域 key（app_settings.panel_visibility 的 JSON 键，无记录时全部显示）
-VISIBILITY_KEYS = ("map", "enterprise_list", "event_feed", "alerts", "ai_summary", "countdown")
+VISIBILITY_KEYS = ("map", "enterprise_list", "event_feed", "alerts", "ai_summary",
+                   "countdown", "role_card")
 
 
 def run_refresh_cycle(ents, active_cats, progress_cb=None) -> dict:
@@ -133,6 +142,7 @@ class MainWindow(QMainWindow):
 
         self._worker = None
         self._next_refresh = None  # 下次自动刷新时间戳
+        self._flash_timer = None    # 状态栏瞬时提示清空定时器
         self._refresh_counter = 0  # 全局刷新计数器（信息域倍率：每 N 轮执行一次）
         self._vis = {k: True for k in VISIBILITY_KEYS}
         self._cat_freq = {}
@@ -176,8 +186,9 @@ class MainWindow(QMainWindow):
         self.feed_panel.event_filters_changed.connect(self._on_filters_changed)
         self.feed_panel.event_double_clicked.connect(self._open_event_detail)
         self.alert_panel = AlertPanel(self)
-        self.alert_panel.spot_filter_requested.connect(self._on_spot_clicked)
+        self.alert_panel.spot_filter_requested.connect(self._on_alert_clicked)
         self.alert_panel.alert_double_clicked.connect(self._open_event_detail)
+        self.alert_panel.enterprise_filter_changed.connect(self._on_alert_filter_changed)
 
         right_split = QSplitter(Qt.Orientation.Vertical)
         right_split.addWidget(self.feed_panel)
@@ -201,6 +212,10 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(central)
         lay.setContentsMargins(theme.SPACE, theme.SPACE, theme.SPACE, theme.SPACE)
         lay.setSpacing(theme.SPACE)
+        # 顶部：角色基础信息卡片（可折叠，显示设置可隐藏）
+        self.role_card = RoleCard(self)
+        self.role_card.refresh()
+        lay.addWidget(self.role_card)
         lay.addWidget(main_split, 4)
         lay.addWidget(self.ai_panel, 1)
         self.setCentralWidget(central)
@@ -210,10 +225,22 @@ class MainWindow(QMainWindow):
         self.source_label = QLabel(self)
         self.ai_label = QLabel(self)
         self.countdown_label = QLabel(self)
+        # 瞬时提示专用标签：见 _flash() 注释（不能用 QStatusBar.showMessage）
+        self.status_msg = QLabel(self)
+        self.status_msg.setProperty("secondary", True)
         # 社媒登录态状态：可点击直达登录态管理
         self.social_label = QLabel(self)
         self.social_label.setToolTip("点击管理社媒登录态（抖音/快手/小红书/微博）")
         self.social_label.mousePressEvent = lambda *_: self._open_social_auth()
+        # 必备信息域缺源：常驻可点击按钮，点击打开源健康度看板并高亮缺失域
+        self.coverage_btn = QPushButton("", self)
+        self.coverage_btn.setFlat(True)
+        self.coverage_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; "
+            f"color: {theme.SEVERITY_ORANGE}; padding: 0 8px; font-weight: 600; }}"
+            f"QPushButton:hover {{ color: {theme.PRIMARY}; }}")
+        self.coverage_btn.clicked.connect(self._open_source_health)
+        self.coverage_btn.setVisible(False)
         self.settings_btn = QPushButton("设置", self)
         self.settings_btn.setFlat(True)
         self.settings_btn.setStyleSheet(
@@ -225,8 +252,10 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.model_label)
         bar.addWidget(self.source_label)
         bar.addWidget(self.social_label)
+        bar.addWidget(self.coverage_btn)
         bar.addWidget(self.ai_label)
         bar.addWidget(self.countdown_label)
+        bar.addWidget(self.status_msg)
         bar.addPermanentWidget(QLabel(DISCLAIMER, self))
         bar.addPermanentWidget(self.settings_btn)
 
@@ -237,46 +266,73 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self):
         bar = QToolBar("主工具栏", self)
         bar.setMovable(False)
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(bar)
 
-        # 监控组
-        monitor_actions = [
-            ("添加企业", self._add_enterprise),
-            ("批量导入", self._import),
-            ("刷新监控", self._manual_refresh),
-        ]
-        for text, slot in monitor_actions:
-            act = QAction(text, self)
-            act.triggered.connect(slot)
-            bar.addAction(act)
+        # —— 工具栏分级（Task 5.1）——
+        #   primary  = 主操作（实心主色，如「生成报告」）
+        #   default  = 次操作（描边，QSS 常态样式）
+        #   danger   = 危险操作（红）
+
+        # ① 主操作组：添加 / 导入 / 刷新（高频、必须一眼可见）
+        for text, icon, tip, slot in (
+            ("添加企业", "plus", "添加一个监控企业（客户）", self._add_enterprise),
+            ("批量导入", "import", "从 Excel/CSV 批量导入监控企业", self._import),
+            ("代查结果导入", "import", "导入连接器代查的标准批次 JSON（schema 1.0）",
+             self._open_connector_import),
+            ("刷新监控", "refresh", "立即执行一轮采集（按信息域频率设置）",
+             self._manual_refresh),
+        ):
+            act = self._make_action(bar, text, icon, tip, slot)
             if text == "刷新监控":
                 self._refresh_action = act
 
         bar.addSeparator()
-        # 分析组
-        analysis_actions = [
-            ("股权穿透", self._penetrate_selected),
-            ("上传授信材料", self._upload_material),
-            ("AI 影响研判", self._ai_impact),
-            ("社媒登录态", self._open_social_auth),
-        ]
-        for text, slot in analysis_actions:
-            act = QAction(text, self)
-            act.triggered.connect(slot)
-            bar.addAction(act)
+        # ② 分析组
+        for text, icon, tip, slot in (
+            ("股权穿透", "tree", "查看该企业的股东/对外投资穿透关系", self._penetrate_selected),
+            ("上传授信材料", "doc", "上传授信材料并做 AI 影响研判", self._upload_material),
+            ("AI 影响研判", "spark", "对当前企业做授信影响研判", self._ai_impact),
+            ("社媒登录态", "chat", "管理抖音/快手/小红书/微博的登录态", self._open_social_auth),
+            ("源健康度", "pulse", "查看各数据源的健康度与失败原因", self._open_source_health),
+        ):
+            self._make_action(bar, text, icon, tip, slot)
 
-        # 报告入口前置为主按钮（靠右常驻）
+        # ③ 主操作（实心主色）常驻靠右
         spacer = QWidget(self)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
+        self.postloan_btn = QPushButton("贷后工作台", self)
+        self.postloan_btn.setToolTip("贷后检查：人工输入 → 系统追问 → 生成贷后报告")
+        self.postloan_btn.clicked.connect(self._open_postloan)
+        bar.addWidget(self.postloan_btn)
         self.report_btn = QPushButton("生成报告", self)
         self.report_btn.setProperty("primary", True)
+        self.report_btn.setToolTip("生成贷后风险监测报告（docx）")
         self.report_btn.clicked.connect(self._gen_report)
         bar.addWidget(self.report_btn)
 
-        settings_act = QAction("设置", self)
-        settings_act.triggered.connect(self._open_settings)
-        bar.addAction(settings_act)
+        # ④ 设置（次操作）
+        self._make_action(bar, "设置", "gear", "打开设置中心（显示/频率/数据源/AI 等）",
+                          self._open_settings)
+
+    def _make_action(self, bar, text: str, icon: str, tip: str, slot) -> QAction:
+        """构造带图标与 tooltip 的工具栏动作（QAction → QToolButton 渲染）。
+
+        注意：**不要设 ``statusTip``**。Qt 在 statusTip 触发时会调用
+        ``QStatusBar.showMessage()``，而 ``showMessage`` 会**隐藏所有以
+        ``addWidget`` 加入状态栏的控件**（模型名/数据源/倒计时等），
+        且 ``clearMessage()`` **不会**把它们恢复——表现为「点一次工具栏按钮，
+        状态栏就少几个信息」。因此这里只给 ``toolTip``（悬停气泡），
+        状态栏的瞬时提示走 ``_flash()``（独立标签，不影响常驻信息）。
+        """
+        from .action_icons import make_icon
+        act = QAction(text, self)
+        act.setIcon(make_icon(icon, theme.PRIMARY))
+        act.setToolTip(tip)
+        act.triggered.connect(slot)
+        bar.addAction(act)
+        return act
 
     # ================= 数据加载 =================
     def reload_data(self):
@@ -293,6 +349,7 @@ class MainWindow(QMainWindow):
         self._reload_events()
         self._reload_map(ents)
         self._update_status_bar()
+        self.role_card.refresh()   # 角色卡片指标随数据刷新
         # 动态创建的控件（列表内按钮等）补装悬停缩放
         refresh_hover_effects()
 
@@ -426,6 +483,28 @@ class MainWindow(QMainWindow):
         self.ai_panel.set_text(text)
 
     # ================= 状态栏 =================
+    def _flash(self, text: str, msec: int = 5000):
+        """在状态栏显示一条**瞬时**提示（自动消失）。
+
+        为什么不用 ``QStatusBar.showMessage()``
+        --------------------------------------
+        Qt 的 ``showMessage`` 会**隐藏所有以 ``addWidget`` 加入状态栏的控件**
+        （模型名 / 数据源 / 社媒登录态 / 倒计时 / 缺源提示…），直到
+        ``clearMessage()`` 才会恢复。于是「点一次工具栏按钮，状态栏就少几个
+        信息」，而 QAction 的 ``statusTip`` 会在鼠标悬停时自动触发它且不保证
+        恢复——本项目曾因此让状态栏信息整片消失。
+
+        这里改为**独立标签 + 定时清空**：常驻信息永远在，瞬时提示单独占一格。
+        """
+        self.status_msg.setText(str(text or ""))
+        if msec <= 0:
+            return
+        if self._flash_timer is None:
+            self._flash_timer = QTimer(self)
+            self._flash_timer.setSingleShot(True)
+            self._flash_timer.timeout.connect(lambda: self.status_msg.setText(""))
+        self._flash_timer.start(msec)
+
     def _update_status_bar(self):
         models = settings.model_policy().get("fallback_models", [])
         model_id = models[0].get("id", "未配置") if models else "未配置"
@@ -453,12 +532,20 @@ class MainWindow(QMainWindow):
         if getattr(self, "_coverage_problems", None):
             try:
                 from ..core.coverage import coverage_message
-                self.source_label.setText(self.source_label.text() + "  ⚠必备信息域缺源")
-                self.source_label.setStyleSheet("color:#FFA033;")
-                self.source_label.setToolTip(
-                    (self.source_label.toolTip() or "") + "\n\n" + coverage_message(self._coverage_problems))
+                labels = "、".join(p["label"] for p in self._coverage_problems)
+                # 可点击按钮（Task 2.3）：点击打开源健康度看板并高亮缺失域
+                self.coverage_btn.setText(f"⚠ 必备信息域缺源：{labels}")
+                self.coverage_btn.setVisible(True)
+                self.coverage_btn.setToolTip(
+                    coverage_message(self._coverage_problems)
+                    + "\n\n（点击打开源健康度看板；可一键导出代查需求单）")
+                self.source_label.setStyleSheet("")
             except Exception:  # noqa: BLE001
                 pass
+        else:
+            self.coverage_btn.setVisible(False)
+            self.coverage_btn.setText("")
+            self.source_label.setStyleSheet("")
 
         if sync is None:
             self.ai_label.setText("模式：同步模块未就绪")
@@ -507,7 +594,7 @@ class MainWindow(QMainWindow):
         if remain <= 0:
             self._next_refresh = None
             if sync is None:
-                self.statusBar().showMessage("同步模块未就绪，自动刷新已跳过", 5000)
+                self._flash("同步模块未就绪，自动刷新已跳过", 5000)
                 self._update_status_bar()
                 return
             self._manual_refresh()
@@ -542,6 +629,7 @@ class MainWindow(QMainWindow):
         self.feed_panel.setVisible(self._vis["event_feed"])
         self.alert_panel.setVisible(self._vis["alerts"])
         self.ai_panel.setVisible(self._vis["ai_summary"])
+        self.role_card.setVisible(self._vis.get("role_card", True))
         self._update_countdown_visibility()
 
     def _update_countdown_visibility(self):
@@ -588,7 +676,7 @@ class MainWindow(QMainWindow):
         if not problems:
             return []
         labels = "、".join(p["label"] for p in problems)
-        self.statusBar().showMessage(f"⚠ 必备信息域缺少可用数据源：{labels}", 8000)
+        self._flash(f"⚠ 必备信息域缺少可用数据源：{labels}", 8000)
         if not self._coverage_warned:
             self._coverage_warned = True
             try:
@@ -613,15 +701,15 @@ class MainWindow(QMainWindow):
         cats = self.due_categories()
         self._refresh_counter += 1
         if not cats:
-            self.statusBar().showMessage(
+            self._flash(
                 "本轮无参与刷新的信息域（已禁用或未到倍率轮次），已跳过", 5000)
             return
-        self.statusBar().showMessage(
+        self._flash(
             f"刷新监控中：共 {len(ents)} 家主体（本轮参与域 {len(cats)}/{len(CATEGORIES)} 个）…")
         self._refresh_action.setEnabled(False)
         self._worker = RefreshWorker(ents, cats, parent=self)
         self._worker.progress.connect(
-            lambda i, n, name: self.statusBar().showMessage(f"刷新监控中（{i}/{n}）：{name}"))
+            lambda i, n, name: self._flash(f"刷新监控中（{i}/{n}）：{name}"))
         self._worker.done.connect(self._on_refresh_done)
         self._worker.failed.connect(self._on_refresh_fail)
         self._worker.start()
@@ -631,14 +719,20 @@ class MainWindow(QMainWindow):
         self._worker = None
         result = result or {}
         ok, fail = result.get("ok", 0), result.get("fail", 0)
-        self.statusBar().showMessage(f"刷新完成：成功 {ok} 家，失败 {fail} 家", 8000)
+        # 记录本轮采集时间（角色卡片展示「本轮采集时间」）
+        try:
+            from .role_card import KEY_LAST_SYNC
+            db.set_setting(KEY_LAST_SYNC, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception:  # noqa: BLE001 - 记录失败不影响刷新结果
+            log.warning("记录采集时间失败", exc_info=True)
+        self._flash(f"刷新完成：成功 {ok} 家，失败 {fail} 家", 8000)
         self._next_refresh = None
         self.reload_data()
 
     def _on_refresh_fail(self, msg):
         self._refresh_action.setEnabled(True)
         self._worker = None
-        self.statusBar().showMessage("刷新失败", 8000)
+        self._flash("刷新失败", 8000)
         self._next_refresh = None
         self._update_status_bar()
         QMessageBox.warning(self, "刷新失败", msg)
@@ -646,8 +740,10 @@ class MainWindow(QMainWindow):
     # ================= 联动 =================
     def _on_spot_clicked(self, name: str):
         self.feed_panel.set_enterprise_filter(name)
+        self.alert_panel.set_enterprise_filter(name)
+        self.map_view.highlight_spot(name)
         self._reload_events()
-        self.statusBar().showMessage(f"已筛选企业事件：{name}", 5000)
+        self._flash(f"已筛选企业事件：{name}", 5000)
 
     def _on_filters_changed(self, category, source):
         self._reload_events()
@@ -661,9 +757,34 @@ class MainWindow(QMainWindow):
         # 先载入数据（填充事件流的企业名映射），再应用企业筛选并同步预警
         self._reload_events()
         self.feed_panel.set_enterprise_filter(name, related_ids or None)
+        self.alert_panel.set_enterprise_filter(name)
+        # 地图光斑脉冲高亮（Task 5.3 三方联动）
+        self.map_view.highlight_spot(name)
         self._sync_alerts()
-        self.statusBar().showMessage(
+        self._flash(
             f"已筛选：{name}（含关联主体 {len(related_ids)} 家）", 5000)
+
+    def _on_alert_filter_changed(self, name: str):
+        """预警列表的筛选上下文变化 → 同步事件流与地图高亮。"""
+        if name:
+            self.feed_panel.set_enterprise_filter(name)
+            self.map_view.highlight_spot(name)
+            self._reload_events()
+
+    def _on_alert_clicked(self, name: str):
+        """单击预警条目 → 地图定位该企业光斑 + 弹出事件详情（Task 5.3）。"""
+        if not name:
+            return
+        # 1) 预警列表自身的企业筛选上下文（会连带同步事件流与地图高亮）
+        self.alert_panel.set_enterprise_filter(name)
+        # 2) 地图聚焦到该企业光斑
+        self.map_view.highlight_spot(name, center=True)
+        self._flash(f"已在地图上定位：{name}", 5000)
+        # 3) 弹出该条事件详情
+        item = self.alert_panel.tree.currentItem()
+        event = item.data(0, ROLE_EVENT) if item is not None else None
+        if event is not None:
+            self._open_event_detail(event)
 
     # ---------- v2 增量：详情弹窗 / 基线历史 ----------
     def _open_event_detail(self, event):
@@ -765,7 +886,7 @@ class MainWindow(QMainWindow):
             return
         latest = materials[-1]
         events = db.list_events(enterprise_id=ent.id, monitored_only=True, limit=100)
-        self.statusBar().showMessage(f"AI 影响研判中：{ent.name} …")
+        self._flash(f"AI 影响研判中：{ent.name} …")
         self._ai_worker = FnWorker(analyze_credit_impact, latest.text, events, parent=self)
         self._ai_worker.done.connect(
             lambda r, eid=ent.id, name=ent.name: self._on_ai_impact_done(eid, name, r))
@@ -773,7 +894,7 @@ class MainWindow(QMainWindow):
         self._ai_worker.start()
 
     def _on_ai_impact_fail(self, msg: str):
-        self.statusBar().showMessage("AI 研判失败", 5000)
+        self._flash("AI 研判失败", 5000)
         QMessageBox.warning(self, "AI 研判失败", msg)
 
     def _on_ai_impact_done(self, ent_id: int, name: str, result: dict):
@@ -782,7 +903,7 @@ class MainWindow(QMainWindow):
         if text:
             db.set_setting(f"credit_impact_{ent_id}", text)
             self._show_ai_result(ent_id, text, result.get("engine", ""))
-        self.statusBar().showMessage("AI 影响研判完成", 5000)
+        self._flash("AI 影响研判完成", 5000)
 
     def _show_ai_result(self, ent_id: int, text: str, engine: str):
         name = self._ent_names.get(ent_id, f"#{ent_id}")
@@ -790,6 +911,13 @@ class MainWindow(QMainWindow):
 
     def _gen_report(self):
         ReportDialog(self).exec()
+
+    def _open_postloan(self):
+        """贷后报告工作台（人工输入 → 追问 → 报告）。"""
+        ent = self.ent_panel.current()
+        dlg = PostLoanDialog(self, ent)
+        dlg.exec()
+        self.reload_data()
 
     def _open_settings(self):
         if SettingsDialog(self).exec():
@@ -804,6 +932,31 @@ class MainWindow(QMainWindow):
         """打开社媒登录态管理（独立弹窗）。"""
         from .social_auth_page import SocialAuthDialog
         SocialAuthDialog(self).exec()
+        self._update_status_bar()
+
+    def _open_source_health(self, highlight_categories=None):
+        """打开源健康度看板（Task 2.2/2.3）。
+
+        从状态栏「必备信息域缺源」按钮进入时，自动高亮缺失域相关的源行。
+        """
+        from .source_health_dialog import SourceHealthDialog
+        # QAction.triggered 会传一个 bool（checked），此时按「无高亮」处理
+        if isinstance(highlight_categories, bool) or not highlight_categories:
+            highlight_categories = None
+        cats = highlight_categories
+        if cats is None:
+            cats = [p.get("category") for p in
+                    (getattr(self, "_coverage_problems", None) or [])]
+        dlg = SourceHealthDialog(self, highlight_categories=cats)
+        dlg.exec()
+        self._update_status_bar()
+
+    def _open_connector_import(self):
+        """代查结果导入（Task 3.2）：选择标准批次 JSON 即可入库。"""
+        from .connector_import_page import ConnectorImportDialog
+        dlg = ConnectorImportDialog(self)
+        dlg.exec()
+        self.reload_data()
         self._update_status_bar()
 
     # ================= R5：干净退出 / 单实例激活 =================

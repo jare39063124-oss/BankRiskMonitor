@@ -144,7 +144,14 @@ class ApiZeroProvider(ProviderBase):
         resp = self.http_get(API_URL, params=params, headers=headers).json()
         code = resp.get("code")
         if code not in (0, "0"):
-            raise RuntimeError(f"ApiZero code={code}: {resp.get('msg')}")
+            msg = str(resp.get("msg") or "")
+            # 4015 = 需要 API Key（匿名 5 次/日额度用尽后出现）
+            if str(code) == "4015" or "API Key" in msg or "需要 API" in msg:
+                raise RuntimeError(
+                    f"ApiZero {code}：{msg}。匿名额度（5 次/日）已用尽，"
+                    "请在 config.yaml 的 apizero.params.api_key 填入 ApiZero Key"
+                    "（填后提升至 10 次/日）；或用 Tavily 工商源补充。")
+            raise RuntimeError(f"ApiZero code={code}: {msg}")
         data = resp.get("data") or {}
         items = data.get("list") or data.get("items") or data.get("results") or []
         if not isinstance(items, list):

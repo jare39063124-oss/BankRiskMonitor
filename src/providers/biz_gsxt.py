@@ -2,6 +2,10 @@
 
 该站点有强反爬（JS 挑战 + 滑动验证码），此处仅做最基本的公开查询尝试；
 任何拦截/解析失败都抛异常，由 run_with_fallback 接管。
+
+实测（2026-10）：首页即返回 HTTP 521（政务 WAF 拦截，裸 HTTP 不可用），
+即便走浏览器渲染后端也拿不到数据（页面空白）。因此本源一律按**尽力而为**
+处理，错误信息必须告诉用户「怎么补」而不是只报一个状态码。
 """
 from bs4 import BeautifulSoup
 
@@ -31,14 +35,22 @@ class GsxtProvider(ProviderBase):
         # 先访问首页取基础 cookie，再发搜索请求
         home = self.http_get(HOMEPAGE_URL)
         if home.status_code != 200:
-            raise RuntimeError(f"gsxt 首页 HTTP {home.status_code}")
+            raise RuntimeError(
+                f"gsxt 首页 HTTP {home.status_code}（政务站点反爬拦截）。"
+                "公示系统需滑块验证码，程序无法自动通过；"
+                "建议改用「代查结果导入」走连接器（企查查/天眼查/启信慧眼），"
+                "或用 Tavily 定向检索 gsxt.gov.cn 的公开页面。")
         resp = self.http_get(SEARCH_URL, params={
             "tab": "", "queryword": ent.name, "searchword": ent.name})
         if resp.status_code != 200:
-            raise RuntimeError(f"gsxt 搜索 HTTP {resp.status_code}")
+            raise RuntimeError(
+                f"gsxt 搜索 HTTP {resp.status_code}（反爬拦截）。"
+                "公示系统需人工滑块验证，建议改用连接器代查并导入。")
         text = resp.text
         if "验证" in text or " lashen " in text or len(text) < 500:
-            raise RuntimeError("gsxt 反爬拦截（需要验证码/JS 挑战）")
+            raise RuntimeError(
+                "gsxt 反爬拦截（需要滑块验证码/JS 挑战，程序无法自动通过）。"
+                "建议改用「代查结果导入」走连接器（企查查/天眼查/启信慧眼）。")
         return self._parse(text, ent)
 
     def _parse(self, html: str, ent: Enterprise) -> list:

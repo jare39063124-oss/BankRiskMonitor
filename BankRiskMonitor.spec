@@ -13,6 +13,20 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
 hiddenimports += collect_submodules('providers')
+# providers.base 的 health_report 会 import core.coverage；
+# core.connector_import 与 core.connector_request 由 GUI 动态引用，
+# 这里显式登记，避免打包时静态分析漏掉（漏掉会在裸 exe 里 ImportError）。
+hiddenimports += [
+    'core.coverage',
+    'core.connector_import',
+    'core.connector_request',
+    'core.geo',
+    'ai.followup',
+    'ai.rule_engine',
+    'ai.agents',
+    'ai.llm_client',
+    'ai.queue_worker',
+]
 
 # ============================================================
 # ARCH-v2 附录 A.1：excludes 清单（移除 WebEngine/QML/Quick/多媒体/图表等未用模块）

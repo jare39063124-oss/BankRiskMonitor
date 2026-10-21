@@ -2,6 +2,10 @@
 
 该站点需 JS 计算Cookie（vjk5/VLMDfL）方可查询，这里做尽力而为的尝试；
 任何拦截/失败都抛异常，由 run_with_fallback 接管。
+
+实测（2026-10）：首页即返回 HTTP 403（站点强反爬 + 需 JS 计算 Cookie），
+程序无法自动通过。因此本源按**尽力而为**处理，错误信息必须给出可操作补源
+建议；「涉诉」域的可靠数据由人民法院公告网（rmfygg，tier 1）承担。
 """
 import json
 
@@ -44,20 +48,29 @@ class WenshuProvider(ProviderBase):
         # 先访问首页获取基础 Cookie，再按站点旧接口格式提交查询
         home = self.http_get(HOME_URL)
         if home.status_code != 200:
-            raise RuntimeError(f"裁判文书网首页 HTTP {home.status_code}")
+            raise RuntimeError(
+                f"裁判文书网首页 HTTP {home.status_code}（站点强反爬）。"
+                "该站需 JS 计算 Cookie/验证码，程序无法自动通过；"
+                "涉诉线索可由人民法院公告网（rmfygg）采集，或用连接器代查后导入。")
         param = {"index": 1, "page": 10, "order": "法院层级", "direction": "desc",
                  "keyword": "", "judicialQuestion": "", "caseType": "",
                  "court": "", "party": ent.name, "startdate": "", "enddate": ""}
         resp = self.http_post(LIST_URL, data={"param": json.dumps(param, ensure_ascii=False)})
         if resp.status_code != 200:
-            raise RuntimeError(f"裁判文书网 HTTP {resp.status_code}")
+            raise RuntimeError(
+                f"裁判文书网 HTTP {resp.status_code}（反爬拦截）。"
+                "建议改用人民法院公告网（rmfygg）或连接器代查。")
         text = resp.text
         if "验证" in text or "请开启JavaScript" in text or text.strip().startswith("<!DOCTYPE"):
-            raise RuntimeError("裁判文书网反爬拦截（需 JS 计算 Cookie/验证码）")
+            raise RuntimeError(
+                "裁判文书网反爬拦截（需 JS 计算 Cookie/验证码，程序无法自动通过）。"
+                "建议改用人民法院公告网（rmfygg）或连接器代查。")
         try:
             payload = json.loads(text)
         except ValueError:
-            raise RuntimeError("裁判文书网返回非 JSON")
+            raise RuntimeError(
+                "裁判文书网返回非 JSON（多为反爬拦截页）。"
+                "建议改用人民法院公告网（rmfygg）或连接器代查。")
         rows = payload if isinstance(payload, list) else (payload.get("data") or [])
         events = []
         for row in rows:

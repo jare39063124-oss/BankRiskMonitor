@@ -5,6 +5,16 @@
 **端点运行时核实**：此处的默认端点仅为兜底，可由 ``config.yaml`` 的
 ``credit_china.params.endpoint`` 覆盖。任何触网/解析失败一律抛 ``RuntimeError``，
 交由 ``run_with_fallback`` 逐源兜底（**绝不冒泡到 GUI、绝不阻塞刷新**）。
+
+实测（2026-10）
+--------------
+该站部署了加速乐 WAF：首页与 API 端点对裸 HTTP 统一返回 **HTTP 412**
+（响应体是 JS 挑战页，会种 ``__jsluid_s`` Cookie）；即便带上完整浏览器请求头
+与 cookie jar 仍被拦。走浏览器渲染后端（Obscura）能打开页面但正文为空
+（挑战脚本需要真实指纹环境），因此当前**无法稳定取数**。
+
+结论：本源按**尽力而为**处理——保留配置位、不静默失败、错误信息明确告诉
+用户「怎么补」（连接器代查 / 改用 rmfygg），不虚报可用。
 """
 from typing import List
 
@@ -54,9 +64,20 @@ class CreditChinaProvider(ProviderBase):
         endpoint = self.params.get("endpoint") or DEFAULT_ENDPOINT
         resp = self.http_get(endpoint, params={"keyword": ent.name, "searchState": "1", "page": 1})
         if resp.status_code in (401, 403):
-            raise RuntimeError("信用中国未授权/鉴权失败（HTTP %s）" % resp.status_code)
+            raise RuntimeError(
+                f"信用中国未授权/鉴权失败（HTTP {resp.status_code}）。"
+                "请在 config.yaml 的 credit_china.params.endpoint 配置可用镜像端点，"
+                "或改用连接器代查后导入。")
+        if resp.status_code == 412:
+            raise RuntimeError(
+                "信用中国 HTTP 412（加速乐 WAF 的 JS 挑战，裸 HTTP 无法通过）。"
+                "建议改用连接器代查（企查查/天眼查/启信慧眼/水滴信用）后导入，"
+                "或依赖人民法院公告网（rmfygg）获取执行/失信线索。")
         if resp.status_code != 200:
-            raise RuntimeError(f"信用中国 HTTP {resp.status_code}")
+            raise RuntimeError(
+                f"信用中国 HTTP {resp.status_code}（端点可能已变更）。"
+                "请在 config.yaml 的 credit_china.params.endpoint 更新为可用端点；"
+                "或改用连接器代查后导入。")
         # JSON 优先；非 JSON 再按反爬页判定（避免把合法 JSON 误判为反爬）
         try:
             data = resp.json()

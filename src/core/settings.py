@@ -267,7 +267,7 @@ sources:
       tier: 3
       class: providers.credit_china.CreditChinaProvider
       params:
-        endpoint: ""
+        endpoint: "https://public.creditchina.gov.cn/private-api/catalogSearchHome"
     - name: commercial_api
       enabled: false
       tier: 2
@@ -370,16 +370,18 @@ policy:
     - openrouter/*
 
 # OpenRouter 免费模型 fallback 列表（按序尝试）
+# 2026-10 实测：原列表 5 个模型全部 404（已下线/仅付费版），已整体替换。
+# 前两个已逐个验证可返回中文。
 fallback_models:
-  - id: deepseek/deepseek-chat-v3.1:free
+  - id: minimax/minimax-m3.1-flash:free
     cost: 0
-  - id: qwen/qwen3-235b-a22b:free
+  - id: xingchen-agi/xing4.0-29b-a4b:free
     cost: 0
-  - id: meta-llama/llama-3.3-70b-instruct:free
+  - id: google/gemma-4-31b-it:free
     cost: 0
-  - id: google/gemma-3-27b-it:free
+  - id: nvidia/nemotron-3-super-120b-a12b:free
     cost: 0
-  - id: mistralai/mistral-small-3.2-24b-instruct:free
+  - id: poolside/laguna-s-2.1:free
     cost: 0
 
 request:

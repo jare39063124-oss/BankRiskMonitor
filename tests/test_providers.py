@@ -568,5 +568,71 @@ class SourceTierTest(unittest.TestCase):
             self.assertFalse(names[n]["enabled"], f"{n} 应默认关闭（仅留 Key 位）")
 
 
+class ActionableErrorHintTest(unittest.TestCase):
+    """反爬/限额类失败的错误信息必须**可操作**：告诉用户下一步做什么。
+
+    背景：Task 1.1 逐一实测各源后发现，政务站（gsxt/wenshu/zxgk/credit_china）
+    全部被 WAF 硬拦截，ApiZero 匿名额度用尽后返回 4015。若错误信息只报状态码，
+    用户无法判断「该源是不是坏了」和「我该做什么」。本组用例锁定「错误信息含
+    补源建议」这一契约。
+    """
+
+    def _msg(self, fn):
+        try:
+            fn()
+        except RuntimeError as e:
+            return str(e)
+        self.fail("应当抛出 RuntimeError")
+
+    def test_gsxt_521_suggests_connector(self):
+        from src.providers import biz_gsxt as m
+        p = m.GsxtProvider({})
+        with mock.patch.object(p, "http_get", return_value=FakeResp("", status_code=521)):
+            msg = self._msg(lambda: p.fetch(Enterprise(id=1, name="测试公司")))
+        self.assertIn("521", msg)
+        self.assertTrue("代查" in msg or "连接器" in msg, msg)
+
+    def test_zxgk_412_suggests_rmfygg(self):
+        from src.providers import court_zxgk as m
+        p = m.ZxgkProvider({})
+        with mock.patch.object(p, "http_post", return_value=FakeResp("", status_code=412)):
+            msg = self._msg(lambda: p.fetch(Enterprise(id=1, name="测试公司")))
+        self.assertIn("412", msg)
+        self.assertTrue("rmfygg" in msg or "人民法院公告网" in msg, msg)
+
+    def test_wenshu_403_suggests_rmfygg(self):
+        from src.providers import court_wenshu as m
+        p = m.WenshuProvider({})
+        with mock.patch.object(p, "http_get", return_value=FakeResp("", status_code=403)):
+            msg = self._msg(lambda: p.fetch(Enterprise(id=1, name="测试公司")))
+        self.assertIn("403", msg)
+        self.assertTrue("rmfygg" in msg or "人民法院公告网" in msg, msg)
+
+    def test_credit_china_412_suggests_connector(self):
+        from src.providers import credit_china as m
+        p = m.CreditChinaProvider({})
+        with mock.patch.object(p, "http_get", return_value=FakeResp("", status_code=412)):
+            msg = self._msg(lambda: p.fetch(Enterprise(id=1, name="测试公司")))
+        self.assertIn("412", msg)
+        self.assertTrue("代查" in msg or "连接器" in msg, msg)
+
+    def test_apizero_4015_suggests_api_key(self):
+        from src.providers import biz_apizero as m
+        p = m.ApiZeroProvider({})
+        payload = {"code": 4015, "msg": "此接口需要 API Key 才能调用"}
+        with mock.patch.object(p, "http_get",
+                               return_value=FakeResp(json_data=payload)):
+            msg = self._msg(lambda: p.fetch(Enterprise(id=1, name="测试公司")))
+        self.assertIn("4015", msg)
+        self.assertIn("api_key", msg)
+
+    def test_credit_china_endpoint_configured(self):
+        """信用中国端点不再为空（Task 1.1 的显式要求）。"""
+        from src.core import settings
+        cfg = settings.config()
+        spec = next(s for s in cfg["sources"]["enforcement"] if s["name"] == "credit_china")
+        self.assertTrue((spec.get("params") or {}).get("endpoint"))
+
+
 if __name__ == "__main__":
     unittest.main()

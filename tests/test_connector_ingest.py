@@ -186,5 +186,83 @@ class ConnectorIngestTest(IngestBase):
         self.assertEqual(len(db.list_events(enterprise_id=self._eid)), 0)  # 未落库
 
 
+class SchemaVersionTest(IngestBase):
+    """schema 1.0 是冻结契约：版本不符的批次必须**整批拒绝**。"""
+
+    def test_wrong_version_rejected(self):
+        path = self._write_json({
+            "schema_version": "2.0", "generated_at": "2026-10-16T14:30:00",
+            "connector": "qcc_company",
+            "companies": [{"name": "样例测试公司", "credit_code": "91211500SAMPLE001",
+                           "changes": [{"change_item": "法定代表人", "before": "a",
+                                        "after": "b", "change_date": "2026-10-05"}]}],
+        })
+        res = ci.run(path)
+        self.assertEqual(res["inserted"], 0)
+        self.assertTrue(any(r["reason"] == "schema_version_mismatch"
+                            for r in res["reasons"]))
+        self.assertEqual(len(db.list_events(enterprise_id=self._eid)), 0)
+
+    def test_missing_version_rejected(self):
+        path = self._write_json({
+            "generated_at": "2026-10-16T14:30:00", "connector": "qcc_company",
+            "companies": [{"name": "样例测试公司", "credit_code": "91211500SAMPLE001",
+                           "changes": [{"change_item": "法定代表人", "before": "a",
+                                        "after": "b", "change_date": "2026-10-05"}]}],
+        })
+        res = ci.run(path)
+        self.assertEqual(res["inserted"], 0)
+        self.assertTrue(any(r["reason"] == "schema_version_mismatch"
+                            for r in res["reasons"]))
+
+
+class ConnectorImportCoreTest(IngestBase):
+    """可复用核心模块 src/core/connector_import.py（GUI 与 CLI 共用）。"""
+
+    def test_core_module_exposes_same_api(self):
+        from src.core import connector_import as cimp
+        self.assertEqual(cimp.SCHEMA_VERSION, "1.0")
+        self.assertIn("qcc_company", cimp.VALID_CONNECTORS)
+        self.assertEqual(cimp.map_connector("foo"), "connector_unknown")
+        self.assertEqual(cimp.map_connector("tyc_mcp"), "tyc_mcp")
+
+    def test_core_run_inserts(self):
+        from src.core import connector_import as cimp
+        res = cimp.run(FIXTURE)
+        self.assertEqual(res["inserted"], 5)
+        self.assertEqual(res["source"], "tyc_mcp")
+
+    def test_summarize_is_readable(self):
+        from src.core import connector_import as cimp
+        res = cimp.run(FIXTURE)
+        text = cimp.summarize(res)
+        self.assertIn("导入 5 条", text)
+        self.assertIn("tyc_mcp", text)
+
+    def test_summarize_translates_reasons(self):
+        from src.core import connector_import as cimp
+        text = cimp.summarize({
+            "inserted": 0, "skipped": 1, "source": "connector_unknown",
+            "companies": 1,
+            "reasons": [{"company": "某公司", "reason": "no_enterprise"}]})
+        self.assertIn("未匹配到监控对象", text)
+
+
+class ConnectorImportGuiTest(unittest.TestCase):
+    """GUI 入口可实例化，且提供干跑/正式导入两条通路。"""
+
+    def test_dialog_builds(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from src.gui.connector_import_page import ConnectorImportDialog
+
+        app = QApplication.instance() or QApplication([])
+        dlg = ConnectorImportDialog()
+        self.assertIn("代查结果导入", dlg.windowTitle())
+        # 默认未选文件时不报错
+        self.assertEqual(dlg._path, "")
+        dlg.close()
+
+
 if __name__ == "__main__":
     unittest.main()

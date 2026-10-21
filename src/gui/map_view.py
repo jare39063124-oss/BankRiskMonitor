@@ -114,6 +114,7 @@ class MapView(QWidget):
 
         self._ripple_phase: float = 0.0
         self._detail_spot: Optional[dict] = None
+        self._highlight_name: str = ""   # 三方联动：被选中的企业名（脉冲高亮）
 
         self.setMouseTracking(True)
         self.setMinimumSize(240, 180)
@@ -245,9 +246,22 @@ class MapView(QWidget):
 
     def _sync_chrome(self):
         names = [f["name"] for f in self._stack]
-        self._crumb.setText("  ›  ".join(names))
+        # 标题显示当前层级（Task 5.4：下钻状态在地图标题中可见）
+        level_label = {"national": "全国", "province": "省级",
+                       "district": "区县"}.get(self._stack[-1]["level"], "")
+        self._crumb.setText(f"[{level_label}] " + "  ›  ".join(names))
         self._back.setVisible(len(self._stack) > 1)
+        self._back.setToolTip("返回上一级")
         self._layout_overlays()
+
+    def current_level(self) -> str:
+        """当前地图层级（``national`` / ``province`` / ``district``）。"""
+        return self._stack[-1]["level"]
+
+    def level_label(self) -> str:
+        """当前层级的中文标签（供外部显示）。"""
+        return {"national": "全国", "province": "省级",
+                "district": "区县"}.get(self._stack[-1]["level"], "")
 
     def _show_message(self, text: str):
         self._msg.setText(text)
@@ -315,6 +329,57 @@ class MapView(QWidget):
             return False
         self._show_detail(visible[0])
         return True
+
+    # ================= 选中高亮（企业 ↔ 事件 ↔ 地图三方联动） =================
+    def highlight_spot(self, name: str, center: bool = True) -> bool:
+        """按企业名高亮（脉冲）地图上的光点，可选把该点移到视图中心。
+
+        这是「左侧企业 → 右侧事件流/预警 ↔ 地图」三方联动的落点：
+        选中企业时调它，地图上对应光斑会持续脉冲高亮。
+
+        返回是否找到并高亮（找不到时清除高亮，不报错）。
+        """
+        target = (name or "").strip()
+        self._highlight_name = target
+        if not target:
+            self.update()
+            return False
+        hit = self._find_spot(target)
+        if hit is None:
+            self.update()
+            return False
+        if center:
+            self._center_spot(hit)
+        self.update()
+        return True
+
+    def clear_highlight(self):
+        """清除光点高亮。"""
+        self._highlight_name = ""
+        self.update()
+
+    def highlighted_name(self) -> str:
+        """当前被高亮的企业名（空串=未高亮）。"""
+        return self._highlight_name
+
+    def _find_spot(self, name: str) -> Optional[dict]:
+        """在**全部**光点中按名称找（不限当前层级可见性）。"""
+        for sp in self._spots:
+            if str(sp.get("name") or "").strip() == name:
+                return sp
+        return None
+
+    def _center_spot(self, sp: dict):
+        """把光点平移到视图中心（保持缩放不变）。"""
+        lon, lat = self._spot_lon_lat(sp)
+        pt = self.proj.world_to_px(lon, lat)
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        dx = cx - pt.x()
+        dy = cy - pt.y()
+        if dx or dy:
+            self.proj.pan(dx, dy)
+            for feat in self._features:
+                feat.build_path(self.proj.k)
 
     # ================= 光点计算 =================
     def _visible_spots(self) -> List[dict]:
@@ -520,6 +585,27 @@ class MapView(QWidget):
             painter.setBrush(QBrush(grad))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(pt, r, r)
+
+            # 选中高亮：外圈脉冲（Task 5.3 三方联动）
+            if self._highlight_name and str(sp.get("name") or "").strip() == self._highlight_name:
+                pulse = (self._ripple_phase * 1.6) % 1.0
+                hr = r * (2.0 + pulse * 1.8)
+                ring = QColor(theme.PRIMARY if hasattr(theme, "PRIMARY") else "#00E5A0")
+                ring.setAlphaF(max(0.0, 0.85 * (1.0 - pulse)))
+                pen = QPen(ring)
+                pen.setWidthF(2.2)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(pt, hr, hr)
+                # 静态外环，保证不依赖动画帧也能看出「被选中」
+                ring2 = QColor(theme.PRIMARY if hasattr(theme, "PRIMARY") else "#00E5A0")
+                ring2.setAlphaF(0.95)
+                pen2 = QPen(ring2)
+                pen2.setWidthF(1.8)
+                pen2.setCosmetic(True)
+                painter.setPen(pen2)
+                painter.drawEllipse(pt, r + 4.0, r + 4.0)
         painter.restore()
 
     def _draw_legend(self, painter: QPainter):

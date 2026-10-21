@@ -26,6 +26,16 @@ class AIUnavailableError(Exception):
     """AI 通道整体不可用（未配置 Key / 已降级 / 全部模型请求失败）。"""
 
 
+class _ModelRequestError(RuntimeError):
+    """单模型请求失败；``permanent`` 表示换模型也没用（应立即切换）。"""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        # 404 模型下线 / 403 无权限 / 400 请求非法 / 422 载荷不合法 → 永久性
+        self.permanent = status_code in (400, 403, 404, 422)
+
+
 def _load_env(path: str = ""):
     """极简 .env 解析（项目未安装 python-dotenv），仅 setdefault，不覆盖已有环境变量。"""
     p = path or os.path.join(app_root(), ".env")
@@ -134,7 +144,8 @@ class LLMClient:
         resp = requests.post(API_URL, json=body, headers=self._headers(),
                              timeout=self.timeout, proxies=self.proxies)
         if resp.status_code != 200:
-            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            raise _ModelRequestError(resp.status_code,
+                                     f"HTTP {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
         if not content:
@@ -158,6 +169,18 @@ class LLMClient:
                     return text, mid
                 except AIUnavailableError:
                     raise  # Key/配置问题：不重试、不计入失败阈值
+                except _ModelRequestError as e:
+                    last_err = e
+                    if e.permanent:
+                        # 模型级永久错误（404 模型已下线 / 403 无权限 / 400 请求非法）：
+                        # 重试没有意义，**立即换下一个模型**，避免白等退避并
+                        # 浪费免费模型的每日额度。
+                        log.warning("模型 %s 不可用（%s），直接切换下一模型", mid, e)
+                        break
+                    log.warning("模型 %s 第 %d/%d 次请求失败: %s",
+                                mid, attempt + 1, self.max_retries + 1, e)
+                    if attempt < self.max_retries:
+                        time.sleep(self.backoff_base * (2 ** attempt))  # 指数退避
                 except Exception as e:
                     last_err = e
                     log.warning("模型 %s 第 %d/%d 次请求失败: %s",

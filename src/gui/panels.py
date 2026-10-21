@@ -440,7 +440,8 @@ class EventFeedPanel(QGroupBox):
         else:
             self._allowed_ids = None
             self._related_ids = set()
-        self.filter_tag.setText(f"企业筛选：{self._ent_filter}" if self._ent_filter else "")
+        self.filter_tag.setText(
+            f"企业筛选：{self._ent_filter}（已筛选）" if self._ent_filter else "")
         self.clear_btn.setVisible(bool(self._ent_filter))
         self._render()
 
@@ -467,6 +468,7 @@ class AlertPanel(QGroupBox):
 
     spot_filter_requested = Signal(str)
     alert_double_clicked = Signal(object)   # ★ v2 R3：双击 → 详情弹窗
+    enterprise_filter_changed = Signal(str)  # 预警列表的企业筛选上下文变化（空串=清除）
 
     def __init__(self, parent=None):
         super().__init__("预警列表", parent)
@@ -479,11 +481,39 @@ class AlertPanel(QGroupBox):
         header.resizeSection(1, 130)
         header.resizeSection(2, 80)
 
+        # 企业筛选上下文（Task 5.2）：标题区显示当前企业 + 清除筛选按钮
+        self.filter_tag = QLabel("", self)
+        self.filter_tag.setProperty("secondary", True)
+        self.clear_btn = QPushButton("清除筛选", self)
+        self.clear_btn.setVisible(False)
+        self.clear_btn.clicked.connect(lambda: self.set_enterprise_filter(None))
+        self._ent_filter = ""
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(theme.SPACE, theme.SPACE, theme.SPACE, theme.SPACE)
         lay.addWidget(self.tree)
+        ctx = QHBoxLayout()
+        ctx.addWidget(self.filter_tag, 1)
+        ctx.addWidget(self.clear_btn)
+        lay.addLayout(ctx)
         self.tree.itemClicked.connect(self._on_click)
         self.tree.itemDoubleClicked.connect(self._on_double_click)
+
+
+    def set_enterprise_filter(self, name: str):
+        """设置/清除企业筛选上下文（标题区显示「企业名（已筛选）」）。"""
+        self._ent_filter = (name or "").strip()
+        if self._ent_filter:
+            self.filter_tag.setText(f"{self._ent_filter}（已筛选）")
+            self.clear_btn.setVisible(True)
+        else:
+            self.filter_tag.setText("")
+            self.clear_btn.setVisible(False)
+        self.enterprise_filter_changed.emit(self._ent_filter)
+
+    def enterprise_filter(self) -> str:
+        """当前企业筛选上下文（空串=未筛选）。"""
+        return self._ent_filter
 
     def set_alerts(self, events: list, ent_names: dict, verdicts: dict = None):
         """events 应仅含放款后变更事件；若传入 verdicts 则再次按 ``change`` 兜底过滤。"""

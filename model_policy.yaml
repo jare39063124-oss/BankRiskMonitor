@@ -6,16 +6,23 @@ policy:
     - openrouter/*
 
 # OpenRouter 免费模型 fallback 列表（按序尝试）
+# 2026-10 实测：原列表 5 个模型全部 404（已下线/仅付费版），已整体替换。
+# 现列表按「实测可返回中文」排序，前两个已逐个验证通过：
+#   minimax/minimax-m3.1-flash:free      —— 中文表达自然，贷后场景可用
+#   xingchen-agi/xing4.0-29b-a4b:free    —— 中文表达自然，问题针对性强
+# 其余为备选（免费模型每日额度受限，可能触发 429）。
+# 注意：免费模型有「每日请求额度」，额度耗尽时返回 429；此时应等待额度恢复，
+#      程序会自动降级为规则模板（不阻断业务）。
 fallback_models:
-  - id: deepseek/deepseek-chat-v3.1:free
+  - id: minimax/minimax-m3.1-flash:free
     cost: 0
-  - id: qwen/qwen3-235b-a22b:free
+  - id: xingchen-agi/xing4.0-29b-a4b:free
     cost: 0
-  - id: meta-llama/llama-3.3-70b-instruct:free
+  - id: google/gemma-4-31b-it:free
     cost: 0
-  - id: google/gemma-3-27b-it:free
+  - id: nvidia/nemotron-3-super-120b-a12b:free
     cost: 0
-  - id: mistralai/mistral-small-3.2-24b-instruct:free
+  - id: poolside/laguna-s-2.1:free
     cost: 0
 
 request:

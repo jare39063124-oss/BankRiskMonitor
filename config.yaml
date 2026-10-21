@@ -72,6 +72,7 @@ sources:
     - name: gsxt
       enabled: true      # 本轮启用（R2）：经营异常/行政处罚/变更记录
       tier: 3            # 尽力而为：政务站点强反爬，允许失败
+                         # 实测 2026-10：首页 HTTP 521（政务 WAF），程序无法通过
       class: providers.biz_gsxt.GsxtProvider
       params: {}
     - name: apizero
@@ -81,6 +82,7 @@ sources:
       params:
         # ApiZero（极数本源）企业工商查询：无需 Key 匿名即可用（5 次/日、1 QPS）
         # 填 api_key 后提升为 10 次/日（header Bearer + params key 双通道）
+        # 实测 2026-10：匿名额度用尽后返回 code=4015「需要 API Key」，填 Key 即恢复
         api_key: ""
     # Tavily 搜索（tavily.com，免费额度）—— 工商信息的**跨域补充源**：
     #   实测结论（两个主体 × 多组 query）：
@@ -232,9 +234,12 @@ sources:
     - name: credit_china
       enabled: true      # 本轮新增（R2）：行政处罚/失信/重大税收违法失信
       tier: 3            # 尽力而为：公开政务源，端点运行时核实
+                         # 实测 2026-10：加速乐 WAF 对裸 HTTP 统一返回 412（JS 挑战），
+                         # 走浏览器渲染后端正文也为空 —— 当前无法稳定取数，错误信息会
+                         # 明确提示改用连接器代查，不虚报可用
       class: providers.credit_china.CreditChinaProvider
       params:
-        endpoint: ""     # 留空使用适配器内置默认端点；端点变更时可覆盖
+        endpoint: "https://public.creditchina.gov.cn/private-api/catalogSearchHome"
     - name: commercial_api
       enabled: false
       tier: 2

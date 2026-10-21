@@ -36,7 +36,9 @@ from PySide6.QtWidgets import (
 from ..core import db, settings
 from ..core.models import CATEGORIES, CATEGORY_LABELS, Enterprise
 from ..core.paths import app_root, reports_dir
+from .connector_import_page import ConnectorImportWidget
 from .hover_effect import setup_dialog_hover
+from .source_health_dialog import SourceHealthWidget
 from .social_auth_page import SocialAuthWidget
 from .workers import FnWorker
 
@@ -648,7 +650,8 @@ class MaterialDialog(QDialog):
 # 全局设置
 # =====================================================================
 class SettingsDialog(QDialog):
-    """六页签：显示设置 / 频率设置 / 监控设置 / 数据源设置 / AI 设置 / 报告设置。"""
+    """八页签：显示设置 / 频率设置 / 监控设置 / 数据源设置 / 社媒登录态 /
+    源健康度 / AI 设置 / 报告设置。"""
 
     # 显示设置页的界面元素清单：key -> 标签
     VISIBILITY_DEFS = [
@@ -658,6 +661,7 @@ class SettingsDialog(QDialog):
         ("alerts", "预警列表"),
         ("ai_summary", "AI 研判摘要"),
         ("countdown", "状态栏刷新倒计时"),
+        ("role_card", "角色基础信息卡片"),
     ]
 
     # 信息域频率倍率选项：文案 -> 倍率值
@@ -678,6 +682,8 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._monitor_tab(), "监控设置")
         self.tabs.addTab(self._sources_tab(), "数据源设置")
         self.tabs.addTab(self._social_auth_tab(), "社媒登录态")
+        self.tabs.addTab(self._source_health_tab(), "源健康度")
+        self.tabs.addTab(self._connector_import_tab(), "代查导入")
         self.tabs.addTab(self._ai_tab(), "AI 设置")
         self.tabs.addTab(self._report_tab(), "报告设置")
 
@@ -716,8 +722,25 @@ class SettingsDialog(QDialog):
             bl.addWidget(cb)
             self.vis_checks[key] = cb
 
+        # 当前角色（角色基础信息卡片展示）
+        from .role_card import KEY_ROLE, ROLES
+        role_box = QGroupBox("当前角色")
+        rl = QHBoxLayout(role_box)
+        self.role_combo = QComboBox(self)
+        for r in ROLES:
+            self.role_combo.addItem(r, r)
+        cur_role = (db.get_setting(KEY_ROLE, "") or "").strip()
+        if cur_role:
+            idx = self.role_combo.findData(cur_role)
+            if idx >= 0:
+                self.role_combo.setCurrentIndex(idx)
+        rl.addWidget(self.role_combo)
+        rl.addStretch(1)
+        rl.addWidget(QLabel("影响主窗口顶部「我的工作台」卡片显示", self))
+
         lay = QVBoxLayout(w)
         lay.addWidget(box)
+        lay.addWidget(role_box)
         lay.addStretch(1)
         return w
 
@@ -862,6 +885,44 @@ class SettingsDialog(QDialog):
         parent.takeChild(idx)
         parent.insertChild(new_idx, item)
         self.src_tree.setCurrentItem(item)
+
+    def highlight_source(self, name: str):
+        """定位并高亮指定数据源（供源健康度看板「跳到数据源设置」调用）。"""
+        if not name or not hasattr(self, "src_tree"):
+            return False
+        root = self.src_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            cat = root.child(i)
+            for j in range(cat.childCount()):
+                child = cat.child(j)
+                data = child.data(0, Qt.ItemDataRole.UserRole) or {}
+                spec = data.get("spec") or {}
+                if spec.get("name") == name:
+                    self.src_tree.setCurrentItem(child)
+                    self.src_tree.scrollToItem(child)
+                    self.tabs.setCurrentWidget(self.src_tree.parentWidget())
+                    return True
+        return False
+
+    # ---------- ⑥ 源健康度 ----------
+    def _source_health_tab(self):
+        """内嵌源健康度看板（与独立弹窗同一套组件）。"""
+        w = QWidget(self)
+        self.source_health_view = SourceHealthWidget(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.source_health_view)
+        return w
+
+    # ---------- ⑦ 代查结果导入 ----------
+    def _connector_import_tab(self):
+        """内嵌代查结果导入（与工具栏弹窗同一套组件）。"""
+        w = QWidget(self)
+        self.connector_import_view = ConnectorImportWidget(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.connector_import_view)
+        return w
 
     # ---------- ⑤ 社媒登录态 ----------
     def _social_auth_tab(self):
@@ -1048,6 +1109,9 @@ class SettingsDialog(QDialog):
         # ⑥ 显示设置 -> app_settings，并即时应用到主窗口（布局自动重排）
         vis = {k: cb.isChecked() for k, cb in self.vis_checks.items()}
         db.set_setting("panel_visibility", json.dumps(vis))
+        # 当前角色（角色基础信息卡片）
+        from .role_card import KEY_ROLE
+        db.set_setting(KEY_ROLE, self.role_combo.currentData() or "")
         mw = self.parent()
         if hasattr(mw, "apply_visibility"):
             mw.apply_visibility(vis)

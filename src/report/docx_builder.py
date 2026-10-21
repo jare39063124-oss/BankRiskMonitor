@@ -14,9 +14,13 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 
 # 章节定义：key -> 标题（编号按出现顺序自动生成）
+# 注：manual（人工检查情况）与 followup（追问与答复）为贷后工作台新增两章，
+#     放在 events 之后、alerts 之前——先讲人工看到什么，再讲系统发现了什么。
 CHAPTER_DEFS = [
     ("overview", "监测对象概况"),
     ("events", "监测事件明细"),
+    ("manual", "人工检查情况"),
+    ("followup", "追问与答复"),
     ("ai", "AI 影响研判"),
     ("penetration", "穿透图谱说明"),
     ("alerts", "预警汇总"),
