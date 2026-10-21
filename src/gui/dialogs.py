@@ -848,6 +848,11 @@ class SettingsDialog(QDialog):
 
         cat_labels = dict(CATEGORY_LABELS)
         sources_cfg = settings.config().get("sources", {})
+        try:
+            from ..providers.base import is_source_active
+        except Exception:  # noqa: BLE001 - 兜底：避免硬依赖 providers 层
+            def is_source_active(spec):
+                return bool((spec or {}).get("enabled"))
         for cat in CATEGORIES:
             root = QTreeWidgetItem([cat_labels.get(cat, cat)])
             root.setFlags(root.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
@@ -855,7 +860,11 @@ class SettingsDialog(QDialog):
             for spec in sources_cfg.get(cat, []):
                 it = QTreeWidgetItem([str(spec.get("name", "")), str(spec.get("class", ""))])
                 it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                it.setCheckState(0, Qt.CheckState.Checked if spec.get("enabled") else Qt.CheckState.Unchecked)
+                # 勾选状态 = 实际生效状态（凭据就绪自动生效的源也要显示为已勾上）
+                it.setCheckState(0, Qt.CheckState.Checked if is_source_active(spec)
+                                 else Qt.CheckState.Unchecked)
+                if spec.get("auto_enable_with_key"):
+                    it.setToolTip(0, "已配置凭据时自动生效；取消勾选可显式停用")
                 it.setData(0, Qt.ItemDataRole.UserRole, {"category": cat, "spec": dict(spec)})
                 root.addChild(it)
             self.src_tree.expandAll()
@@ -1070,7 +1079,13 @@ class SettingsDialog(QDialog):
                 data = child.data(0, Qt.ItemDataRole.UserRole) or {}
                 cat = data.get("category")
                 spec = dict(data.get("spec") or {})
-                spec["enabled"] = child.checkState(0) == Qt.CheckState.Checked
+                checked = child.checkState(0) == Qt.CheckState.Checked
+                if "auto_enable_with_key" in spec:
+                    # 凭据就绪即生效的源：勾选状态落到 auto_enable_with_key，
+                    # enabled 保持出厂口径不变（requires_key 源出厂必须关闭）。
+                    spec["auto_enable_with_key"] = checked
+                else:
+                    spec["enabled"] = checked
                 sources.setdefault(cat, []).append(spec)
         src_cfg = settings.config().get("sources", {})
         rebuilt = {}

@@ -115,16 +115,58 @@ def resolve_tier(spec: dict) -> int:
     return 1
 
 
+# 凭据类参数名（requires_key 的源需其中至少一项有值才算"已配置"）
+CREDENTIAL_PARAMS = ("api_key", "cookie", "token", "secret_key")
+
+
+def has_credentials(spec: dict) -> bool:
+    """源是否已配置至少一项凭据。
+
+    凭据支持 ``${VAR}`` 间接引用（真实密钥放 .env，config.yaml 不入库）：
+    占位符需能在环境变量里取到值才算「已配置」，避免 .env 未填时报出
+    「可用」的假象。
+    """
+    spec = spec or {}
+    params = spec.get("params") or {}
+    return any(
+        str(settings.expand_env(params.get(k)) or "").strip()
+        for k in CREDENTIAL_PARAMS
+    )
+
+
+def is_source_active(spec: dict) -> bool:
+    """源在运行时是否**真正参与采集**（出厂默认口径 + 凭据就绪自动生效）。
+
+    两条规则叠加：
+    1. ``enabled: true`` —— 用户显式启用，直接生效；
+    2. ``auto_enable_with_key: true`` 且凭据已就绪（.env 里有对应 Key）
+       —— 自动生效。
+
+    为什么需要第 2 条：团队验收口径要求「``requires_key`` 的源出厂必须
+    ``enabled: false``」（没配 Key 就别白跑、别报错）。但免费源一旦在 .env
+    里配好了 Key（如 Tavily），就该真的跑起来，而不是还要用户再去设置页
+    手动勾一次。用独立的 ``auto_enable_with_key`` 标记表达「凭据就绪即生效」，
+    既守住出厂默认关闭的契约，又让已配凭据的免费源立即可用。
+    """
+    spec = spec or {}
+    if spec.get("enabled"):
+        return True
+    if spec.get("auto_enable_with_key") and has_credentials(spec):
+        return True
+    return False
+
+
 def availability_text(spec: dict, failed: bool = False) -> str:
     """数据源可用性 → UI 文案（冻结，ARCH §8.8）。绝不静默失败。"""
     spec = spec or {}
-    params = spec.get("params") or {}
-    if not spec.get("enabled"):
-        if spec.get("requires_key") and not params.get("api_key"):
+    active = is_source_active(spec)
+    creds = has_credentials(spec)
+    if not active:
+        if spec.get("requires_key") and not creds:
             return "未配置 Key，已跳过"
         return "已停用"
     if failed:
-        if spec.get("requires_key") and not params.get("api_key"):
+        if spec.get("requires_key") and not creds:
             return "未配置 Key，已跳过"
         return "该源当前不可用（反爬/网络）"
     return "可用"
@@ -137,9 +179,10 @@ def summarize_sources(cfg: dict = None) -> str:
     for specs in (cfg.get("sources", {}) or {}).values():
         for spec in specs or []:
             total += 1
-            if spec.get("enabled"):
+            if is_source_active(spec):
                 enabled += 1
     return f"数据源：{enabled}/{total} 启用"
+
 
 def load_providers(category: str):
     """按 config.yaml 中该类目的声明顺序实例化启用的 Provider。
@@ -148,7 +191,7 @@ def load_providers(category: str):
     """
     out = []
     for spec in settings.config().get("sources", {}).get(category, []):
-        if not spec.get("enabled"):
+        if not is_source_active(spec):
             continue
         try:
             mod_path, cls_name = spec["class"].rsplit(".", 1)
@@ -250,7 +293,7 @@ def health_report() -> List[Dict[str, Any]]:
             rows.append({
                 "name": name,
                 "category": cat,
-                "enabled": bool(spec.get("enabled")),
+                "enabled": is_source_active(spec),
                 "tier": resolve_tier(spec),
                 "status": st.get("last_status", ""),
                 "count": st.get("last_count", 0),

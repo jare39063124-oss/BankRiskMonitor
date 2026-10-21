@@ -85,6 +85,18 @@ def _has_credentials(spec: dict) -> bool:
     return any(str(expand(params.get(k)) or "").strip() for k in _KEY_PARAMS)
 
 
+def _is_active(spec: dict) -> bool:
+    """源是否**真正参与采集**（与 providers.base.is_source_active 同一口径）。
+
+    复用 base 层实现，避免「覆盖度认为已启用、调度器认为已停用」这类口径分裂。
+    """
+    try:
+        from ..providers.base import is_source_active
+        return bool(is_source_active(spec))
+    except Exception:  # noqa: BLE001 - 兜底：避免硬依赖 providers 层
+        return bool((spec or {}).get("enabled"))
+
+
 def _is_reliable(spec: dict) -> bool:
     """是否「可靠」源：tier 1，或 tier 2 且已配置凭据。tier 3（反爬）不算可靠。"""
     tier = _resolve_tier(spec)
@@ -99,7 +111,7 @@ def category_coverage(cfg: Optional[dict], category: str) -> Dict:
     """单个信息域的覆盖度明细。"""
     cfg = cfg or {}
     specs = list((cfg.get("sources", {}) or {}).get(category, []) or [])
-    enabled = [s for s in specs if s.get("enabled")]
+    enabled = [s for s in specs if _is_active(s)]
     reliable = [s for s in enabled if _is_reliable(s)]
     best_effort = [s for s in enabled if not _is_reliable(s)]
     if reliable:
@@ -116,7 +128,7 @@ def category_coverage(cfg: Optional[dict], category: str) -> Dict:
         "enabled": [s.get("name", "?") for s in enabled],
         "reliable": [s.get("name", "?") for s in reliable],
         "best_effort": [s.get("name", "?") for s in best_effort],
-        "disabled": [s.get("name", "?") for s in specs if not s.get("enabled")],
+        "disabled": [s.get("name", "?") for s in specs if not _is_active(s)],
     }
 
 

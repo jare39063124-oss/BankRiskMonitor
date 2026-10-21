@@ -551,6 +551,70 @@ class SourceTierTest(unittest.TestCase):
         s = pbase.summarize_sources({"sources": {"x": [{"enabled": True}, {"enabled": False}]}})
         self.assertEqual(s, "数据源：1/2 启用")
 
+    def test_is_source_active_respects_enabled_flag(self):
+        """enabled:true 直接生效；enabled:false 且无自动标记则不生效。"""
+        from src.providers import base as pbase
+        self.assertTrue(pbase.is_source_active({"enabled": True}))
+        self.assertFalse(pbase.is_source_active({"enabled": False}))
+        self.assertFalse(pbase.is_source_active({}))
+
+    def test_is_source_active_auto_enables_with_credentials(self):
+        """auto_enable_with_key + 凭据就绪 -> 自动生效（免费源配好 Key 即跑）。"""
+        from src.providers import base as pbase
+        spec = {
+            "enabled": False,
+            "auto_enable_with_key": True,
+            "requires_key": True,
+            "params": {"api_key": "REAL-KEY"},
+        }
+        self.assertTrue(pbase.is_source_active(spec))
+        # 没配凭据 -> 不生效
+        spec2 = dict(spec, params={"api_key": ""})
+        self.assertFalse(pbase.is_source_active(spec2))
+
+    def test_is_source_active_expands_env_placeholder(self):
+        """凭据走 ${VAR} 间接引用时，按环境变量实际取值判定。"""
+        from src.providers import base as pbase
+        os.environ["BRM_TEST_KEY"] = "VALUE-FROM-ENV"
+        try:
+            spec = {
+                "enabled": False,
+                "auto_enable_with_key": True,
+                "params": {"api_key": "${BRM_TEST_KEY}"},
+            }
+            self.assertTrue(pbase.is_source_active(spec))
+            os.environ.pop("BRM_TEST_KEY")
+            self.assertFalse(pbase.is_source_active(spec))
+        finally:
+            os.environ.pop("BRM_TEST_KEY", None)
+
+    def test_availability_text_auto_enabled_source(self):
+        """凭据就绪自动生效的源，文案应为「可用」而非「已停用」。"""
+        from src.providers import base as pbase
+        spec = {
+            "enabled": False,
+            "auto_enable_with_key": True,
+            "requires_key": True,
+            "params": {"api_key": "REAL-KEY"},
+        }
+        self.assertEqual(pbase.availability_text(spec), "可用")
+
+    def test_config_requires_key_sources_disabled_by_default(self):
+        """团队验收口径：requires_key 源出厂必须 enabled:false。"""
+        cfg = settings.config()
+        for cat, specs in cfg["sources"].items():
+            for spec in specs or []:
+                if spec.get("requires_key"):
+                    self.assertFalse(
+                        spec.get("enabled"),
+                        f"{cat}/{spec.get('name')} 为 requires_key 源，出厂不得启用")
+                # 声明「凭据就绪自动生效」的源，必须真的依赖凭据
+                if spec.get("auto_enable_with_key"):
+                    self.assertTrue(
+                        spec.get("requires_key") or spec.get("paid"),
+                        f"{cat}/{spec.get('name')} 声明了凭据自动生效，"
+                        f"但既非 requires_key 也非 paid 源")
+
     def test_config_tiering_no_paid_enabled(self):
         # 无付费源进入默认启用集；关键源启用/关闭状态符合本轮策略
         from src.providers import base as pbase

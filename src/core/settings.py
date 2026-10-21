@@ -140,7 +140,8 @@ sources:
     # Tavily 搜索（免费额度）：工商信息跨域补充源；api_key 走 .env 间接引用。
     # query 只写企业全名精度最高（实测加关键词反而 0 命中）；涉诉/被执行走 rmfygg。
     - name: tavily
-      enabled: true
+      enabled: false        # 出厂默认关闭（团队口径：requires_key 源出厂必须关闭）
+      auto_enable_with_key: true   # 但 .env 里配好 TAVILY_API_KEY 后自动生效
       tier: 2
       requires_key: true
       class: providers.tavily_search.TavilyProvider

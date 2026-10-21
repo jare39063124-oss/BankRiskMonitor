@@ -94,7 +94,8 @@ sources:
     #   api_key 走 ${TAVILY_API_KEY} 间接引用（真实密钥放 .env，config.yaml 不入库）；
     #   .env 未配时该源自动跳过，不影响其它源。
     - name: tavily
-      enabled: true
+      enabled: false        # 出厂默认关闭（团队口径：requires_key 源出厂必须关闭）
+      auto_enable_with_key: true   # 但 .env 里配好 TAVILY_API_KEY 后自动生效
       tier: 2            # 条件可用：需 Key（免费额度，advanced 深度约 2 积分/次）
       requires_key: true
       class: providers.tavily_search.TavilyProvider

@@ -515,6 +515,8 @@ class MainWindow(QMainWindow):
         enabled = sum(1 for v in sources.values() for s in v if s.get("enabled"))
         try:
             from ..providers import base as prov_base
+            enabled = sum(1 for v in sources.values() for s in v
+                          if prov_base.is_source_active(s))
             self.source_label.setText(prov_base.summarize_sources())
             lines = []
             for cat, specs in sources.items():

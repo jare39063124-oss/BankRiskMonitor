@@ -1,2 +1,2 @@
 PNG=E:\软件工程项目\BankRiskMonitor\docs\qa\map_national_qa.png
-采样点数=106800 非背景=5900 占比=5.5243%
+采样点数=106800 非背景=5921 占比=5.5440%

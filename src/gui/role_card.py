@@ -174,7 +174,13 @@ def _source_summary() -> tuple:
     cfg = settings.config()
     sources = cfg.get("sources", {}) or {}
     total = sum(len(v or []) for v in sources.values())
-    enabled = sum(1 for v in sources.values() for s in (v or []) if s.get("enabled"))
+    try:
+        from ..providers.base import is_source_active
+    except Exception:  # noqa: BLE001 - 兜底：避免硬依赖 providers 层
+        def is_source_active(spec):
+            return bool((spec or {}).get("enabled"))
+    enabled = sum(1 for v in sources.values() for s in (v or [])
+                  if is_source_active(s))
     problems = check_required_coverage(cfg)
     if problems:
         cov = "必备域缺源：" + "、".join(p["label"] for p in problems)
